@@ -1,0 +1,6 @@
+FROM openresty/openresty:alpine
+
+# Install HTTP client module used by Lua auth script.
+RUN apk add --no-cache perl curl \
+	&& mkdir -p /var/cache/nginx/cdn \
+	&& /usr/local/openresty/bin/opm get ledgetech/lua-resty-http

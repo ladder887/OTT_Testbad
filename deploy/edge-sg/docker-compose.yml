@@ -1,0 +1,35 @@
+name: ott-edge-sg
+
+services:
+  edge:
+    build:
+      context: ../../scrubber
+      dockerfile: Dockerfile.gateway
+    container_name: edge-sg
+    environment:
+      EDGE_ID: edge-sg
+      VERIFY_API_URL: http://192.168.0.100:3001/api/playback/verify
+    ports:
+      - "80:80"
+    volumes:
+      - ../edge-common/nginx.remote.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ../../scrubber/lua:/usr/local/openresty/nginx/lua:ro
+      - edge_logs:/var/log/nginx
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat-edge-sg
+    user: root
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    volumes:
+      - ../edge-common/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - edge_logs:/var/log/scrubber:ro
+      - filebeat_data:/usr/share/filebeat/data
+    depends_on:
+      - edge
+    restart: unless-stopped
+
+volumes:
+  edge_logs:
+  filebeat_data:

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTT Platform - Origin Server</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #e50914;
+        }
+        .status {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+        }
+        .status-ok {
+            color: #46d369;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 OTT CDN Origin Server</h1>
+        <div class="status">
+            <h2>서버 상태</h2>
+            <div class="status-item">
+                <span>Origin Server:</span>
+                <span class="status-ok">✓ Running</span>
+            </div>
+            <div class="status-item">
+                <span>HLS Streaming:</span>
+                <span class="status-ok">✓ Available</span>
+            </div>
+            <div class="status-item">
+                <span>Port:</span>
+                <span>8080</span>
+            </div>
+        </div>
+        <div class="status">
+            <h2>접속 정보</h2>
+            <p><strong>React Web UI:</strong> <a href="http://localhost:3000" style="color: #e50914;">http://localhost:3000</a></p>
+            <p><strong>HLS Endpoint:</strong> http://localhost:8080/hls/</p>
+            <p><strong>Health Check:</strong> <a href="/health" style="color: #46d369;">/health</a></p>
+        </div>
+    </div>
+</body>
+</html>

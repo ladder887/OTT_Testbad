@@ -1,0 +1,209 @@
+.login-page {
+  min-height: 100vh;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.7) 0%,
+    rgba(0, 0, 0, 0.5) 50%,
+    rgba(0, 0, 0, 0.7) 100%
+  ),
+  url('https://assets.nflxext.com/ffe/siteui/vlv3/9f46b569-aff7-4975-9b8e-3212e4637f16/453ba2a1-6138-4e3c-9a06-b66f9a2832e4/KR-ko-20240415-popsignuptwoweeks-perspective_alpha_website_large.jpg');
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-header {
+  padding: 20px 50px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.login-header .logo {
+  color: #e50914;
+  font-size: 2.5rem;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: -2px;
+}
+
+.login-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px 40px;
+}
+
+.login-body {
+  background: rgba(0, 0, 0, 0.75);
+  padding: 60px 68px 40px;
+  border-radius: 4px;
+  max-width: 450px;
+  width: 100%;
+}
+
+.login-body h1 {
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 28px;
+}
+
+.error-message {
+  background-color: #e87c03;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.login-form .form-group {
+  margin-bottom: 16px;
+}
+
+.login-form input[type="email"],
+.login-form input[type="password"] {
+  width: 100%;
+  height: 50px;
+  padding: 16px 20px;
+  background: #333;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 16px;
+}
+
+.login-form input::placeholder {
+  color: #8c8c8c;
+}
+
+.login-form input:focus {
+  outline: none;
+  background: #454545;
+}
+
+.btn-login {
+  width: 100%;
+  height: 50px;
+  margin: 24px 0 12px;
+  background: #e50914;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-login:hover {
+  background: #f40612;
+}
+
+.form-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.remember-me {
+  display: flex;
+  align-items: center;
+  color: #b3b3b3;
+  cursor: pointer;
+}
+
+.remember-me input {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+}
+
+.help-link {
+  color: #b3b3b3;
+  text-decoration: none;
+}
+
+.help-link:hover {
+  text-decoration: underline;
+}
+
+.signup-link {
+  margin-top: 16px;
+  color: #737373;
+  font-size: 16px;
+}
+
+.signup-link a {
+  color: #fff;
+  text-decoration: none;
+}
+
+.signup-link a:hover {
+  text-decoration: underline;
+}
+
+.recaptcha-info {
+  margin-top: 16px;
+  color: #8c8c8c;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.login-footer {
+  background: rgba(0, 0, 0, 0.75);
+  padding: 30px 50px;
+  margin-top: auto;
+}
+
+.footer-content {
+  max-width: 1000px;
+  margin: 0 auto;
+  color: #737373;
+  font-size: 13px;
+}
+
+.footer-content p {
+  margin-bottom: 20px;
+}
+
+.footer-links {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.footer-links a {
+  color: #737373;
+  text-decoration: none;
+}
+
+.footer-links a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 740px) {
+  .login-body {
+    padding: 40px 30px;
+    background: rgba(0, 0, 0, 0.85);
+  }
+  
+  .login-header {
+    padding: 20px 30px;
+  }
+  
+  .login-header .logo {
+    font-size: 2rem;
+  }
+  
+  .footer-links {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -1,0 +1,236 @@
+﻿{
+  "defaults": {
+    "api_base_url": "http://192.168.0.100:3001",
+    "web_base_url": "http://192.168.0.100:5173",
+    "content_selection": "random_from_list",
+    "edge_probe_urls": [
+      "http://192.168.0.111",
+      "http://192.168.0.112",
+      "http://192.168.0.113",
+      "http://192.168.0.114"
+    ],
+    "probe_count": 5,
+    "request_timeout_sec": 20,
+    "user_agent": "Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  "accounts": {
+    "user1": { "email": "user1@test.com", "password": "testpass123" },
+    "user2": { "email": "user2@test.com", "password": "testpass123" },
+    "user3": { "email": "user3@test.com", "password": "testpass123" },
+    "user4": { "email": "user4@test.com", "password": "testpass123" },
+    "user5": { "email": "user5@test.com", "password": "testpass123" },
+    "user6": { "email": "user6@test.com", "password": "testpass123" },
+    "user7": { "email": "user7@test.com", "password": "testpass123" },
+    "user8": { "email": "user8@test.com", "password": "testpass123" },
+    "user9": { "email": "user9@test.com", "password": "testpass123" },
+    "user10": { "email": "user10@test.com", "password": "testpass123" }
+  },
+  "profiles": {
+    "pi-01": {
+      "description": "user1 normal mixed patterns",
+      "run_order": "random",
+      "runs": [
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n1",
+            "scenario_id": "N1",
+            "label": "normal",
+            "content_id": "movie_001",
+            "account_key": "user1",
+            "browse_queries": ["movie", "drama"],
+            "pattern": {
+              "type": "sequential",
+              "target_resolution": "720p",
+              "segment_count": 28,
+              "min_delay_sec": 5.3,
+              "max_delay_sec": 6.9
+            },
+            "history": { "watch_duration_sec": 150, "total_duration_sec": 720 }
+          }
+        },
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n2",
+            "scenario_id": "N2",
+            "label": "normal",
+            "content_id": "movie_002",
+            "account_key": "user1",
+            "browse_queries": ["action", "recommend"],
+            "pattern": {
+              "type": "seek",
+              "first_segment_count": 14,
+              "seek_to_segment": 48,
+              "after_seek_count": 14,
+              "seek_pause_sec": 2.0,
+              "min_delay_sec": 5.0,
+              "max_delay_sec": 6.6
+            },
+            "history": { "watch_duration_sec": 145, "total_duration_sec": 720 }
+          }
+        },
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n3",
+            "scenario_id": "N3",
+            "label": "normal",
+            "content_id": "movie_003",
+            "account_key": "user1",
+            "browse_queries": ["sports", "news"],
+            "pattern": {
+              "type": "abr",
+              "qualities": ["1080p", "720p"],
+              "segments_per_quality": 8,
+              "switch_delay_sec": 2.0,
+              "min_delay_sec": 5.0,
+              "max_delay_sec": 6.5
+            },
+            "history": { "watch_duration_sec": 150, "total_duration_sec": 600 }
+          }
+        },
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n4",
+            "scenario_id": "N4",
+            "label": "normal",
+            "content_id": "movie_001",
+            "account_key": "user1",
+            "browse_queries": ["documentary"],
+            "pattern": {
+              "type": "pause_resume",
+              "first_segment_count": 10,
+              "pause_sec": 180,
+              "second_segment_count": 14,
+              "min_delay_sec": 5.3,
+              "max_delay_sec": 6.8
+            },
+            "history": { "watch_duration_sec": 170, "total_duration_sec": 720 }
+          }
+        },
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n5",
+            "scenario_id": "N5",
+            "label": "normal",
+            "content_id": "movie_002",
+            "account_key": "user1",
+            "browse_queries": ["kids", "animation"],
+            "pattern": {
+              "type": "pause_resume",
+              "first_segment_count": 10,
+              "pause_sec": 300,
+              "second_segment_count": 16,
+              "min_delay_sec": 5.3,
+              "max_delay_sec": 6.8
+            },
+            "history": { "watch_duration_sec": 210, "total_duration_sec": 540 }
+          }
+        },
+        {
+          "mode": "parallel",
+          "sessions": [
+            {
+              "name": "u1-n6-a",
+              "scenario_id": "N6",
+              "label": "normal",
+              "content_id": "movie_001",
+              "account_key": "user1",
+              "browse_queries": ["movie"],
+              "pattern": {
+                "type": "sequential",
+                "target_resolution": "720p",
+                "segment_count": 18,
+                "min_delay_sec": 5.2,
+                "max_delay_sec": 6.7
+              },
+              "history": { "watch_duration_sec": 120, "total_duration_sec": 720 }
+            },
+            {
+              "name": "u1-n6-b",
+              "scenario_id": "N6",
+              "label": "normal",
+              "content_id": "movie_003",
+              "account_key": "user1",
+              "browse_queries": ["series"],
+              "pattern": {
+                "type": "sequential",
+                "target_resolution": "720p",
+                "segment_count": 18,
+                "min_delay_sec": 5.2,
+                "max_delay_sec": 6.7
+              },
+              "history": { "watch_duration_sec": 120, "total_duration_sec": 600 }
+            }
+          ]
+        },
+        {
+          "mode": "single",
+          "session": {
+            "name": "u1-n7",
+            "scenario_id": "N7",
+            "label": "normal",
+            "content_id": "live_001",
+            "account_key": "user1",
+            "browse_queries": ["live", "sports"],
+            "pattern": {
+              "type": "live",
+              "poll_count": 16,
+              "poll_interval_sec": 2.5
+            },
+            "history": { "watch_duration_sec": 220, "total_duration_sec": 3600 }
+          }
+        }
+      ]
+    },
+    "pi-02": { "description": "user2 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u2-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_001", "account_key": "user2", "browse_queries": ["movie"], "pattern": { "type": "sequential", "segment_count": 24, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 140, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u2-n2", "scenario_id": "N2", "label": "normal", "content_id": "movie_002", "account_key": "user2", "browse_queries": ["action"], "pattern": { "type": "seek", "first_segment_count": 12, "seek_to_segment": 40, "after_seek_count": 12, "seek_pause_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.6 }, "history": { "watch_duration_sec": 140, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u2-n3", "scenario_id": "N3", "label": "normal", "content_id": "movie_003", "account_key": "user2", "browse_queries": ["news"], "pattern": { "type": "abr", "qualities": ["1080p", "720p"], "segments_per_quality": 7, "switch_delay_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.5 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 600 } } }
+    ]},
+    "pi-03": { "description": "user3 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u3-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_003", "account_key": "user3", "browse_queries": ["movie", "family"], "pattern": { "type": "sequential", "segment_count": 26, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 150, "total_duration_sec": 600 } } },
+      { "mode": "single", "session": { "name": "u3-n4", "scenario_id": "N4", "label": "normal", "content_id": "movie_001", "account_key": "user3", "browse_queries": ["docu"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 150, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.7 }, "history": { "watch_duration_sec": 165, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u3-n7", "scenario_id": "N7", "label": "normal", "content_id": "live_001", "account_key": "user3", "browse_queries": ["live"], "pattern": { "type": "live", "poll_count": 14, "poll_interval_sec": 2.5 }, "history": { "watch_duration_sec": 200, "total_duration_sec": 3600 } } }
+    ]},
+    "pi-04": { "description": "user4 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u4-n2", "scenario_id": "N2", "label": "normal", "content_id": "movie_004", "account_key": "user4", "browse_queries": ["trending"], "pattern": { "type": "seek", "first_segment_count": 12, "seek_to_segment": 44, "after_seek_count": 12, "seek_pause_sec": 2.0, "min_delay_sec": 5.1, "max_delay_sec": 6.7 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u4-n3", "scenario_id": "N3", "label": "normal", "content_id": "movie_002", "account_key": "user4", "browse_queries": ["sports"], "pattern": { "type": "abr", "qualities": ["1080p", "720p"], "segments_per_quality": 8, "switch_delay_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.5 }, "history": { "watch_duration_sec": 150, "total_duration_sec": 540 } } },
+      { "mode": "single", "session": { "name": "u4-n5", "scenario_id": "N5", "label": "normal", "content_id": "movie_001", "account_key": "user4", "browse_queries": ["series"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 260, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 200, "total_duration_sec": 720 } } }
+    ]},
+    "pi-05": { "description": "user5 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u5-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_002", "account_key": "user5", "browse_queries": ["movie"], "pattern": { "type": "sequential", "segment_count": 24, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 140, "total_duration_sec": 540 } } },
+      { "mode": "single", "session": { "name": "u5-n6", "scenario_id": "N6", "label": "normal", "content_id": "movie_003", "account_key": "user5", "browse_queries": ["family"], "pattern": { "type": "sequential", "segment_count": 20, "min_delay_sec": 5.1, "max_delay_sec": 6.7 }, "history": { "watch_duration_sec": 130, "total_duration_sec": 600 } } },
+      { "mode": "single", "session": { "name": "u5-n7", "scenario_id": "N7", "label": "normal", "content_id": "live_001", "account_key": "user5", "browse_queries": ["live"], "pattern": { "type": "live", "poll_count": 14, "poll_interval_sec": 2.5 }, "history": { "watch_duration_sec": 210, "total_duration_sec": 3600 } } }
+    ]},
+    "pi-06": { "description": "user6 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u6-n3", "scenario_id": "N3", "label": "normal", "content_id": "movie_001", "account_key": "user6", "browse_queries": ["sports", "movie"], "pattern": { "type": "abr", "qualities": ["1080p", "720p"], "segments_per_quality": 8, "switch_delay_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.6 }, "history": { "watch_duration_sec": 150, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u6-n4", "scenario_id": "N4", "label": "normal", "content_id": "movie_004", "account_key": "user6", "browse_queries": ["documentary"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 150, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 165, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u6-n5", "scenario_id": "N5", "label": "normal", "content_id": "movie_002", "account_key": "user6", "browse_queries": ["kids"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 300, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 210, "total_duration_sec": 540 } } }
+    ]},
+    "pi-07": { "description": "user7 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u7-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_003", "account_key": "user7", "browse_queries": ["movie"], "pattern": { "type": "sequential", "segment_count": 24, "min_delay_sec": 5.3, "max_delay_sec": 6.9 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 600 } } },
+      { "mode": "single", "session": { "name": "u7-n2", "scenario_id": "N2", "label": "normal", "content_id": "movie_001", "account_key": "user7", "browse_queries": ["action"], "pattern": { "type": "seek", "first_segment_count": 12, "seek_to_segment": 50, "after_seek_count": 12, "seek_pause_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.6 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u7-n7", "scenario_id": "N7", "label": "normal", "content_id": "live_001", "account_key": "user7", "browse_queries": ["live", "sports"], "pattern": { "type": "live", "poll_count": 14, "poll_interval_sec": 2.5 }, "history": { "watch_duration_sec": 210, "total_duration_sec": 3600 } } }
+    ]},
+    "pi-08": { "description": "user8 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u8-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_001", "account_key": "user8", "browse_queries": ["movie", "family"], "pattern": { "type": "sequential", "segment_count": 26, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 150, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u8-n3", "scenario_id": "N3", "label": "normal", "content_id": "movie_004", "account_key": "user8", "browse_queries": ["sports"], "pattern": { "type": "abr", "qualities": ["1080p", "720p"], "segments_per_quality": 7, "switch_delay_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.5 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u8-n4", "scenario_id": "N4", "label": "normal", "content_id": "movie_002", "account_key": "user8", "browse_queries": ["docu"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 160, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 160, "total_duration_sec": 540 } } }
+    ]},
+    "pi-09": { "description": "user9 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u9-n2", "scenario_id": "N2", "label": "normal", "content_id": "movie_003", "account_key": "user9", "browse_queries": ["series", "trending"], "pattern": { "type": "seek", "first_segment_count": 12, "seek_to_segment": 44, "after_seek_count": 12, "seek_pause_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.6 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 600 } } },
+      { "mode": "single", "session": { "name": "u9-n5", "scenario_id": "N5", "label": "normal", "content_id": "movie_001", "account_key": "user9", "browse_queries": ["kids"], "pattern": { "type": "pause_resume", "first_segment_count": 10, "pause_sec": 300, "second_segment_count": 14, "min_delay_sec": 5.2, "max_delay_sec": 6.8 }, "history": { "watch_duration_sec": 210, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u9-n7", "scenario_id": "N7", "label": "normal", "content_id": "live_001", "account_key": "user9", "browse_queries": ["live"], "pattern": { "type": "live", "poll_count": 14, "poll_interval_sec": 2.5 }, "history": { "watch_duration_sec": 200, "total_duration_sec": 3600 } } }
+    ]},
+    "pi-10": { "description": "user10 normal mixed patterns", "run_order": "random", "runs": [
+      { "mode": "single", "session": { "name": "u10-n1", "scenario_id": "N1", "label": "normal", "content_id": "movie_004", "account_key": "user10", "browse_queries": ["movie", "trending"], "pattern": { "type": "sequential", "segment_count": 24, "min_delay_sec": 5.3, "max_delay_sec": 6.9 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u10-n3", "scenario_id": "N3", "label": "normal", "content_id": "movie_001", "account_key": "user10", "browse_queries": ["sports", "news"], "pattern": { "type": "abr", "qualities": ["1080p", "720p"], "segments_per_quality": 7, "switch_delay_sec": 2.0, "min_delay_sec": 5.0, "max_delay_sec": 6.5 }, "history": { "watch_duration_sec": 145, "total_duration_sec": 720 } } },
+      { "mode": "single", "session": { "name": "u10-n6", "scenario_id": "N6", "label": "normal", "content_id": "movie_002", "account_key": "user10", "browse_queries": ["family"], "pattern": { "type": "sequential", "segment_count": 20, "min_delay_sec": 5.2, "max_delay_sec": 6.7 }, "history": { "watch_duration_sec": 130, "total_duration_sec": 540 } } }
+    ]}
+  }
+}
+
