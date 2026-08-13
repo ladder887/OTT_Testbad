@@ -1,0 +1,69 @@
+filebeat.inputs:
+  # Access Gateway Logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/access-gateway/access.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      service: access-gateway
+      log_type: access
+    fields_under_root: true
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/access-gateway/error.log
+    fields:
+      service: access-gateway
+      log_type: error
+    fields_under_root: true
+
+  # Origin Server Logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/origin/access.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      service: origin-server
+      log_type: access
+    fields_under_root: true
+
+# Elasticsearch Output
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  indices:
+    - index: "access-gateway-nginx-%{+yyyy.MM.dd}"
+      when.equals:
+        service: "access-gateway"
+    - index: "origin-nginx-%{+yyyy.MM.dd}"
+      when.equals:
+        service: "origin-server"
+
+# Processors
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+  
+  # Timestamp 파싱
+  - timestamp:
+      field: timestamp
+      layouts:
+        - '2006-01-02T15:04:05Z07:00'
+        - '2006-01-02T15:04:05.999Z07:00'
+      test:
+        - '2025-12-01T10:30:45+09:00'
+
+# Logging
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

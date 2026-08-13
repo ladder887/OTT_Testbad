@@ -1,0 +1,39 @@
+name: ott-edge-kr
+
+services:
+  edge:
+    build:
+      context: ../../01_platform/02_access_gateway
+      dockerfile: Dockerfile.gateway
+    container_name: edge-kr
+    environment:
+      EDGE_ID: edge-kr
+      VERIFY_API_URL: http://192.168.0.101:3001/api/playback/verify
+      VERIFY_API_TIMEOUT_MS: 5000
+      VERIFY_CACHE_TTL_SEC: 10
+    ports:
+      - "80:80"
+    volumes:
+      - ../01_edge-common/nginx.remote.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ../../01_platform/02_access_gateway/lua:/usr/local/openresty/nginx/lua:ro
+      - edge_logs:/var/log/nginx
+      - edge_cache:/var/cache/nginx
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat-edge-kr
+    user: root
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    volumes:
+      - ../01_edge-common/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - edge_logs:/var/log/access-gateway:ro
+      - filebeat_data:/usr/share/filebeat/data
+    depends_on:
+      - edge
+    restart: unless-stopped
+
+volumes:
+  edge_logs:
+  edge_cache:
+  filebeat_data:

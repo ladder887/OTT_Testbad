@@ -1,0 +1,49 @@
+---
+- name: Deploy one exact repository revision
+  hosts: all
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Require a full Git commit SHA
+      ansible.builtin.assert:
+        that:
+          - deployment_revision is match("^[0-9a-fA-F]{40}$")
+        fail_msg: >-
+          Pass a committed 40-character SHA with
+          -e deployment_revision=$(git -C ../../.. rev-parse HEAD).
+
+  tasks:
+    - name: Checkout repository without overwriting remote edits
+      ansible.builtin.git:
+        repo: "{{ project_repo_url }}"
+        dest: "{{ project_root }}"
+        version: "{{ deployment_revision }}"
+        update: true
+        force: false
+      register: repository_checkout
+
+    - name: Read deployed revision
+      ansible.builtin.command:
+        argv:
+          - git
+          - rev-parse
+          - HEAD
+        chdir: "{{ project_root }}"
+      register: deployed_revision
+      changed_when: false
+
+    - name: Require the requested revision
+      ansible.builtin.assert:
+        that:
+          - deployed_revision.stdout | trim == deployment_revision
+        fail_msg: >-
+          {{ inventory_hostname }} is at {{ deployed_revision.stdout | trim }},
+          not {{ deployment_revision }}.
+
+    - name: Report repository state
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          revision: "{{ deployed_revision.stdout | trim }}"
+          changed: "{{ repository_checkout.changed }}"

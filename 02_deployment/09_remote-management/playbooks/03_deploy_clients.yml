@@ -1,0 +1,107 @@
+---
+- name: Generate and start 10 logical clients on each Raspberry Pi
+  hosts: client_nodes
+  serial: 2
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load encrypted deployment secrets
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/vault.yml"
+        name: vault_secrets
+      no_log: true
+
+    - name: Validate test account password
+      ansible.builtin.assert:
+        that:
+          - vault_secrets.vault_ott_test_password | length >= 8
+          - "'CHANGE_ME' not in vault_secrets.vault_ott_test_password"
+        fail_msg: Set the test account password in encrypted inventory/vault.yml.
+      no_log: true
+
+    - name: Check configured data interface
+      ansible.builtin.stat:
+        path: "/sys/class/net/{{ client_parent_interface }}"
+      register: client_interface
+
+    - name: Require configured data interface
+      ansible.builtin.assert:
+        that:
+          - client_interface.stat.exists
+        fail_msg: >-
+          {{ client_parent_interface }} does not exist on {{ inventory_hostname }}.
+
+  tasks:
+    - name: Generate canonical logical-client inventory
+      ansible.builtin.command:
+        argv:
+          - python3
+          - 03_experiments/03_orchestration/generate_logical_client_inventory.py
+        chdir: "{{ project_root }}"
+      changed_when: true
+
+    - name: Validate generated inventory
+      ansible.builtin.command:
+        argv:
+          - python3
+          - 03_experiments/05_validation/validate_inventory.py
+          - 03_experiments/07_generated/logical_clients.json
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Build logical-client image
+      ansible.builtin.command:
+        argv:
+          - docker
+          - build
+          - -t
+          - "{{ logical_client_image }}"
+          - 03_experiments/01_client_runtime
+        chdir: "{{ project_root }}"
+      changed_when: true
+
+    - name: Write Pi-specific Compose environment
+      ansible.builtin.copy:
+        dest: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}/.env
+        mode: "0600"
+        content: |
+          CLIENT_PARENT_INTERFACE={{ client_parent_interface }}
+          LOGICAL_CLIENT_IMAGE={{ logical_client_image }}
+          OTT_TEST_PASSWORD={{ vault_secrets.vault_ott_test_password }}
+      no_log: true
+
+    - name: Validate Pi-specific Compose
+      ansible.builtin.command:
+        argv: [docker, compose, config, --quiet]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      changed_when: false
+
+    - name: Start logical clients
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      changed_when: true
+
+    - name: Count running logical clients
+      ansible.builtin.command:
+        argv: [docker, compose, ps, --status, running, --quiet]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      register: running_clients
+      changed_when: false
+
+    - name: Require 10 running logical clients
+      ansible.builtin.assert:
+        that:
+          - running_clients.stdout_lines | length == logical_clients_per_host
+        fail_msg: >-
+          {{ inventory_hostname }} has {{ running_clients.stdout_lines | length }}
+          running logical clients; expected {{ logical_clients_per_host }}.

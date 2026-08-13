@@ -1,0 +1,8 @@
+---
+vault_postgres_password: CHANGE_ME_POSTGRES
+vault_neo4j_password: CHANGE_ME_NEO4J
+vault_jwt_secret: CHANGE_ME_JWT
+vault_jwt_refresh_secret: CHANGE_ME_JWT_REFRESH
+vault_cdn_shared_secret: CHANGE_ME_CDN
+vault_ott_admin_password: CHANGE_ME_ADMIN_ACCOUNT
+vault_ott_test_password: CHANGE_ME_TEST_ACCOUNT

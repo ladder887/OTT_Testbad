@@ -1,0 +1,43 @@
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/access-gateway/access.log
+    json.keys_under_root: true
+    json.overwrite_keys: true
+    json.add_error_key: true
+    fields:
+      edge_service: access-gateway
+      log_type: access
+    fields_under_root: true
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/access-gateway/error.log
+    fields:
+      edge_service: access-gateway
+      log_type: error
+    fields_under_root: true
+
+output.elasticsearch:
+  hosts: ["192.168.0.120:9200"]
+  index: "access-gateway-nginx-%{+yyyy.MM.dd}"
+
+setup.ilm.enabled: false
+setup.template.enabled: true
+setup.template.name: "access-gateway-nginx"
+setup.template.pattern: "access-gateway-nginx-*"
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

@@ -1,0 +1,224 @@
+---
+- name: Start Analysis Storage
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load encrypted deployment secrets
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/vault.yml"
+        name: vault_secrets
+      no_log: true
+
+    - name: Validate Neo4j password
+      ansible.builtin.assert:
+        that:
+          - vault_secrets.vault_neo4j_password | length >= 12
+          - "'CHANGE_ME' not in vault_secrets.vault_neo4j_password"
+        fail_msg: Set a real Neo4j password in encrypted inventory/vault.yml.
+      no_log: true
+
+  tasks:
+    - name: Write Analysis Storage environment
+      ansible.builtin.copy:
+        dest: "{{ project_root }}/{{ deployment_path }}/.env"
+        mode: "0600"
+        content: |
+          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
+      no_log: true
+
+    - name: Validate Analysis Storage Compose
+      ansible.builtin.command:
+        argv: [docker, compose, config, --quiet]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: false
+
+    - name: Start Analysis Storage
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Wait for Elasticsearch
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200
+        status_code: 200
+      register: elasticsearch_health
+      retries: 30
+      delay: 5
+      until: elasticsearch_health.status == 200
+
+- name: Start Origin and API without changing media
+  hosts: origin_api
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load encrypted deployment secrets
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/vault.yml"
+        name: vault_secrets
+      no_log: true
+
+    - name: Validate Origin and API secrets
+      ansible.builtin.assert:
+        that:
+          - vault_secrets[item] | length >= 12
+          - "'CHANGE_ME' not in vault_secrets[item]"
+        fail_msg: Set real deployment secrets in encrypted inventory/vault.yml.
+      loop:
+        - vault_postgres_password
+        - vault_neo4j_password
+        - vault_jwt_secret
+        - vault_jwt_refresh_secret
+        - vault_cdn_shared_secret
+        - vault_ott_admin_password
+        - vault_ott_test_password
+      no_log: true
+
+    - name: Inspect configured media directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ origin_hls_dir }}"
+        - "{{ origin_source_dir }}"
+        - "{{ origin_thumbnail_dir }}"
+      register: media_directories
+
+    - name: Require existing media directories
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+        fail_msg: >-
+          {{ item.item }} does not exist. Set the actual Origin path in
+          inventory/group_vars/all/main.yml. Ansible will not create or move
+          media automatically.
+      loop: "{{ media_directories.results }}"
+
+  tasks:
+    - name: Write Origin and API environment
+      ansible.builtin.copy:
+        dest: "{{ project_root }}/{{ deployment_path }}/.env"
+        mode: "0600"
+        content: |
+          POSTGRES_PASSWORD={{ vault_secrets.vault_postgres_password }}
+          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
+          JWT_SECRET={{ vault_secrets.vault_jwt_secret }}
+          JWT_REFRESH_SECRET={{ vault_secrets.vault_jwt_refresh_secret }}
+          CDN_SHARED_SECRET={{ vault_secrets.vault_cdn_shared_secret }}
+          OTT_ADMIN_PASSWORD={{ vault_secrets.vault_ott_admin_password }}
+          OTT_TEST_PASSWORD={{ vault_secrets.vault_ott_test_password }}
+          ORIGIN_HLS_DIR={{ origin_hls_dir }}
+          ORIGIN_SOURCE_DIR={{ origin_source_dir }}
+          ORIGIN_THUMBNAIL_DIR={{ origin_thumbnail_dir }}
+      no_log: true
+
+    - name: Validate Origin and API Compose
+      ansible.builtin.command:
+        argv: [docker, compose, config, --quiet]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: false
+
+    - name: Start Origin and API
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, --build]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Wait for API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3001/health
+        status_code: 200
+      register: api_health
+      retries: 30
+      delay: 5
+      until: api_health.status == 200
+
+    - name: Wait for Origin Nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/health
+        status_code: 200
+      register: origin_health
+      retries: 12
+      delay: 5
+      until: origin_health.status == 200
+
+- name: Start Edge gateways one at a time
+  hosts: edge_nodes
+  serial: 1
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Validate Edge Compose
+      ansible.builtin.command:
+        argv: [docker, compose, config, --quiet]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: false
+
+    - name: Start Edge
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, --build]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Wait for Edge health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1/health
+        status_code: 200
+      register: edge_health
+      retries: 12
+      delay: 5
+      until: edge_health.status == 200
+
+- name: Start Graph Processing
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load encrypted deployment secrets
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/vault.yml"
+        name: vault_secrets
+      no_log: true
+
+    - name: Validate Neo4j password
+      ansible.builtin.assert:
+        that:
+          - vault_secrets.vault_neo4j_password | length >= 12
+          - "'CHANGE_ME' not in vault_secrets.vault_neo4j_password"
+        fail_msg: Set a real Neo4j password in encrypted inventory/vault.yml.
+      no_log: true
+
+  tasks:
+    - name: Write Graph Pipeline environment
+      ansible.builtin.copy:
+        dest: "{{ project_root }}/{{ deployment_path }}/.env"
+        mode: "0600"
+        content: |
+          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
+      no_log: true
+
+    - name: Validate Graph Pipeline Compose
+      ansible.builtin.command:
+        argv: [docker, compose, config, --quiet]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: false
+
+    - name: Start Graph Pipeline
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, --build]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Require Graph Pipeline container to be running
+      ansible.builtin.command:
+        argv: [docker, inspect, -f, "{{ '{{.State.Running}}' }}", ott-graph-pipeline-central]
+      register: graph_pipeline_running
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: graph_pipeline_running.stdout | trim == "true"

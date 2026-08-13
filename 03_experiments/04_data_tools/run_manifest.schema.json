@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ott-testbed.local/schemas/run-manifest-v1.json",
+  "title": "OTT TNSM experiment run manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "dataset_prefix",
+    "scenario_id",
+    "seed",
+    "status",
+    "logical_client_ids",
+    "parameters"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "dataset_prefix": {
+      "type": "string",
+      "pattern": "^tnsm_100lc_[0-9]{8}_.+$"
+    },
+    "scenario_id": {
+      "type": "string",
+      "pattern": "^[NA][1-7]$"
+    },
+    "attack_family": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        null
+      ]
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "enum": [
+        "scheduled",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "logical_client_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^lc[0-9]{3}$"
+      }
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "scheduled_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "started_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "expected_request_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "observed_request_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

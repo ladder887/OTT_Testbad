@@ -1,0 +1,214 @@
+---
+- name: Verify deployed HLS inventory
+  hosts: origin_api
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Read actual Origin HLS inventory
+      ansible.builtin.command:
+        argv:
+          - python3
+          - 03_experiments/04_data_tools/inventory_hls.py
+          - --root
+          - "{{ origin_hls_dir }}"
+        chdir: "{{ project_root }}"
+      register: hls_inventory_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Require valid inventory output
+      ansible.builtin.assert:
+        that:
+          - hls_inventory_raw.stdout | trim is match("^\\{")
+        fail_msg: >-
+          HLS inventory could not be parsed on Origin:
+          {{ hls_inventory_raw.stderr | default("no stderr") }}
+
+    - name: Parse HLS inventory
+      ansible.builtin.set_fact:
+        hls_inventory: "{{ hls_inventory_raw.stdout | from_json }}"
+
+    - name: Collect observed rendition names
+      ansible.builtin.set_fact:
+        observed_renditions: >-
+          {{
+            hls_inventory.contents
+            | map(attribute='media_playlists')
+            | flatten
+            | map(attribute='rendition')
+            | unique
+            | list
+          }}
+
+    - name: Require deployed media baseline
+      ansible.builtin.assert:
+        that:
+          - hls_inventory_raw.rc == 0
+          - hls_inventory.summary.vod | int >= minimum_vod_count
+          - hls_inventory.summary.live | int >= minimum_live_count
+          - hls_inventory.summary.contents_with_errors | int == 0
+          - required_renditions | difference(observed_renditions) | length == 0
+        fail_msg: >-
+          Expected at least {{ minimum_vod_count }} VOD, {{ minimum_live_count }}
+          LIVE, no inventory errors, and {{ required_renditions }}. Observed
+          summary={{ hls_inventory.summary }},
+          renditions={{ observed_renditions }}.
+
+    - name: Require every content item to expose both renditions
+      ansible.builtin.assert:
+        that:
+          - >-
+            required_renditions
+            | difference(
+                item.media_playlists
+                | map(attribute='rendition')
+                | list
+              )
+            | length == 0
+        fail_msg: >-
+          {{ item.content_id }} does not expose every required rendition.
+          required={{ required_renditions }},
+          observed={{
+            item.media_playlists
+            | map(attribute='rendition')
+            | list
+          }}.
+      loop: "{{ hls_inventory.contents }}"
+      loop_control:
+        label: "{{ item.content_id }}"
+
+    - name: Read API content catalog
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3001/api/content/list
+        status_code: 200
+        return_content: true
+      register: content_catalog_response
+
+    - name: Collect HLS and catalog paths
+      ansible.builtin.set_fact:
+        hls_content_paths: >-
+          {{
+            hls_inventory.contents
+            | map(attribute='relative_path')
+            | list
+          }}
+        catalog_hls_paths: >-
+          {{
+            content_catalog_response.json
+            | map(attribute='hlsPath')
+            | list
+          }}
+        catalog_vod_count: >-
+          {{
+            content_catalog_response.json
+            | selectattr('contentType', 'equalto', 'vod')
+            | list
+            | length
+          }}
+        catalog_live_count: >-
+          {{
+            content_catalog_response.json
+            | selectattr('contentType', 'equalto', 'live')
+            | list
+            | length
+          }}
+
+    - name: Require API catalog and HLS to match
+      ansible.builtin.assert:
+        that:
+          - hls_content_paths | difference(catalog_hls_paths) | length == 0
+          - catalog_hls_paths | difference(hls_content_paths) | length == 0
+          - catalog_vod_count | int >= minimum_vod_count
+          - catalog_live_count | int >= minimum_live_count
+        fail_msg: >-
+          PostgreSQL content metadata and Origin HLS do not match.
+          HLS-only={{ hls_content_paths | difference(catalog_hls_paths) }},
+          DB-only={{ catalog_hls_paths | difference(hls_content_paths) }},
+          DB VOD/LIVE={{ catalog_vod_count }}/{{ catalog_live_count }}.
+
+    - name: Verify that all LIVE playlists advance
+      ansible.builtin.command:
+        argv:
+          - python3
+          - 03_experiments/04_data_tools/verify_live_hls.py
+          - --root
+          - "{{ origin_hls_dir }}"
+          - --wait-seconds
+          - "{{ live_probe_wait_seconds | string }}"
+          - --minimum-live
+          - "{{ minimum_live_count | string }}"
+        chdir: "{{ project_root }}"
+      register: live_verification
+      changed_when: false
+      failed_when: false
+
+    - name: Require rolling LIVE playlists
+      ansible.builtin.assert:
+        that:
+          - live_verification.rc == 0
+        fail_msg: >-
+          One or more LIVE playlists did not advance:
+          {{ live_verification.stdout | default(live_verification.stderr) }}
+
+- name: Verify platform containers
+  hosts: platform_nodes
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Read running Compose services
+      ansible.builtin.command:
+        argv: [docker, compose, ps, --status, running, --services]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      register: running_services
+      changed_when: false
+
+    - name: Require all platform services
+      ansible.builtin.assert:
+        that:
+          - required_services | difference(running_services.stdout_lines) | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} is missing required services.
+          required={{ required_services }},
+          running={{ running_services.stdout_lines }}.
+
+- name: Verify client containers
+  hosts: client_nodes
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Count running logical clients
+      ansible.builtin.command:
+        argv: [docker, compose, ps, --status, running, --quiet]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      register: running_clients
+      changed_when: false
+
+    - name: Require expected logical clients
+      ansible.builtin.assert:
+        that:
+          - running_clients.stdout_lines | length == logical_clients_per_host
+        fail_msg: >-
+          {{ inventory_hostname }} has {{ running_clients.stdout_lines | length }}
+          running logical clients; expected {{ logical_clients_per_host }}.
+
+- name: Verify lab endpoints from the control node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Request each health endpoint
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        status_code: 200
+        timeout: 10
+      loop: "{{ platform_health_urls }}"
+      register: endpoint_results
+      retries: 3
+      delay: 3
+      until: endpoint_results.status == 200

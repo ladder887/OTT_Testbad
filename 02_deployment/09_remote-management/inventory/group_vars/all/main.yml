@@ -1,0 +1,28 @@
+---
+project_root: /home/ottadmin/OTT_Testbad
+project_repo_url: https://github.com/ladder887/OTT_Testbad.git
+deployment_revision: "{{ lookup('env', 'OTT_DEPLOYMENT_REVISION') | default('', true) }}"
+
+origin_hls_dir: /srv/ott-media/hls
+origin_source_dir: /srv/ott-media/source
+origin_thumbnail_dir: /srv/ott-media/thumbnails
+
+minimum_vod_count: 13
+minimum_live_count: 3
+live_probe_wait_seconds: 12
+required_renditions:
+  - 1080p
+  - 720p
+
+logical_client_image: ott-logical-client:tnsm
+logical_clients_per_host: 10
+require_ntp_synced: true
+
+platform_health_urls:
+  - http://192.168.0.101:3001/health
+  - http://192.168.0.101:8080/health
+  - http://192.168.0.111/health
+  - http://192.168.0.112/health
+  - http://192.168.0.113/health
+  - http://192.168.0.114/health
+  - http://192.168.0.120:9200

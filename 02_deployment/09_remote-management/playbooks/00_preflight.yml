@@ -1,0 +1,104 @@
+---
+- name: Validate every server, Edge, and Client Pi
+  hosts: all
+  gather_facts: true
+  become: false
+
+  tasks:
+    - name: Require Debian-family Linux and Python 3
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == "Debian"
+          - ansible_python.version.major == 3
+        fail_msg: >-
+          {{ inventory_hostname }} must run Debian/Raspberry Pi OS with Python 3.
+
+    - name: Require the configured physical hostname
+      ansible.builtin.assert:
+        that:
+          - ansible_hostname == expected_hostname
+        fail_msg: >-
+          Inventory expects hostname {{ expected_hostname }}, but the node reports
+          {{ ansible_hostname }}. Fix the OS hostname or inventory before deployment.
+      when: expected_hostname is defined
+
+    - name: Require the configured management address
+      ansible.builtin.assert:
+        that:
+          - ansible_host in ansible_all_ipv4_addresses
+        fail_msg: >-
+          {{ inventory_hostname }} does not own configured address {{ ansible_host }}.
+          Complete the DHCP reservation or static-address setup before deployment.
+
+    - name: Verify Docker access without sudo
+      ansible.builtin.command:
+        argv:
+          - docker
+          - info
+      changed_when: false
+
+    - name: Read Docker Compose version
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - version
+      register: compose_version
+      changed_when: false
+
+    - name: Read NTP synchronization state
+      ansible.builtin.command:
+        argv:
+          - timedatectl
+          - show
+          - --property=NTPSynchronized
+          - --value
+      register: ntp_state
+      changed_when: false
+      failed_when: false
+
+    - name: Require synchronized clocks
+      ansible.builtin.assert:
+        that:
+          - ntp_state.rc == 0
+          - ntp_state.stdout | trim == "yes"
+        fail_msg: >-
+          {{ inventory_hostname }} is not NTP-synchronized. Event timestamps
+          cannot be compared until the clock is fixed.
+      when: require_ntp_synced | bool
+
+    - name: Check client data interface
+      ansible.builtin.stat:
+        path: "/sys/class/net/{{ client_parent_interface }}"
+      register: client_interface
+      when: inventory_hostname in groups["client_nodes"]
+
+    - name: Require configured client data interface
+      ansible.builtin.assert:
+        that:
+          - client_interface.stat.exists
+        fail_msg: >-
+          {{ client_parent_interface }} does not exist on {{ inventory_hostname }}.
+          Set the correct interface in inventory/hosts.yml.
+      when: inventory_hostname in groups["client_nodes"]
+
+    - name: Read root filesystem usage
+      ansible.builtin.command:
+        argv:
+          - df
+          - -Pk
+          - /
+      register: root_disk
+      changed_when: false
+
+    - name: Show verified node summary
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          system_hostname: "{{ ansible_hostname }}"
+          address: "{{ ansible_host }}"
+          distribution: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          architecture: "{{ ansible_architecture }}"
+          compose: "{{ compose_version.stdout | trim }}"
+          ntp_synchronized: "{{ ntp_state.stdout | trim }}"
+          root_disk: "{{ root_disk.stdout_lines[-1] }}"

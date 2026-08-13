@@ -1,0 +1,15 @@
+---
+- name: Stop logical clients without deleting data
+  hosts: client_nodes
+  serial: 2
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Stop Pi-specific logical clients
+      ansible.builtin.command:
+        argv: [docker, compose, down]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      changed_when: true

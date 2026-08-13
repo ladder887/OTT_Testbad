@@ -1,0 +1,10 @@
+# Python dependencies for the graph-processing pipeline.
+
+# Core
+elasticsearch==8.11.0
+neo4j>=5.15.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Scheduling
+schedule>=1.2.0

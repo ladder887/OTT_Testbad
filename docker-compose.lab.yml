@@ -7,12 +7,14 @@ services:
     environment:
       POSTGRES_DB: ott_auth
       POSTGRES_USER: ott_user
-      POSTGRES_PASSWORD: ott_password_2025
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.lab}"
+      OTT_ADMIN_PASSWORD: "${OTT_ADMIN_PASSWORD:?Set OTT_ADMIN_PASSWORD in .env.lab}"
+      OTT_TEST_PASSWORD: "${OTT_TEST_PASSWORD:?Set OTT_TEST_PASSWORD in .env.lab}"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./01_platform/03_database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ott_user -d ott_auth"]
       interval: 10s
@@ -24,7 +26,7 @@ services:
     image: neo4j:5
     container_name: ott-neo4j
     environment:
-      NEO4J_AUTH: neo4j/ott_detection_2025
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env.lab}"
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -52,10 +54,10 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./origin/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./origin/hls:/var/www/hls:ro
-      - ./origin/thumbnails:/var/www/thumbnails:ro
-      - ./origin/html:/usr/share/nginx/html:ro
+      - ./01_platform/01_origin/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./01_platform/01_origin/hls:/var/www/hls:ro
+      - ./01_platform/01_origin/thumbnails:/var/www/thumbnails:ro
+      - ./01_platform/01_origin/html:/usr/share/nginx/html:ro
       - origin_logs:/var/log/nginx
     restart: unless-stopped
 
@@ -65,8 +67,8 @@ services:
     environment:
       LIVE_SOURCE_FILE: /source/sample.mp4
     volumes:
-      - ./origin/hls:/var/www/content
-      - ./origin/source:/source
+      - ./01_platform/01_origin/hls:/var/www/content
+      - ./01_platform/01_origin/source:/source
     entrypoint: /bin/sh
     command: |
       -lc '
@@ -84,15 +86,15 @@ services:
         echo "Waiting for live source file: $$SRC";
         sleep 5;
       done;
-      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -b:v 3000k -c:a aac -b:a 128k -f hls -hls_time 6 -hls_list_size 5 -hls_flags delete_segments+append_list+independent_segments -hls_segment_filename "/var/www/content/live_001/1080p/seg_%05d.ts" "/var/www/content/live_001/1080p/playlist.m3u8" &
-      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -vf scale=1280:720 -b:v 1500k -c:a aac -b:a 96k -f hls -hls_time 6 -hls_list_size 5 -hls_flags delete_segments+append_list+independent_segments -hls_segment_filename "/var/www/content/live_001/720p/seg_%05d.ts" "/var/www/content/live_001/720p/playlist.m3u8"
+      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -b:v 3000k -c:a aac -b:a 128k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_001/1080p/seg_%05d.ts" "/var/www/content/live_001/1080p/playlist.m3u8" &
+      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -vf scale=1280:720 -b:v 1500k -c:a aac -b:a 96k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_001/720p/seg_%05d.ts" "/var/www/content/live_001/720p/playlist.m3u8"
       '
     restart: unless-stopped
 
-  scrubber-api:
+  access-api:
     build:
-      context: ./scrubber/api
-    container_name: ott-scrubber-api
+      context: ./01_platform/02_access_gateway/api
+    container_name: ott-access-api
     environment:
       PORT: 3001
       NODE_ENV: production
@@ -101,14 +103,17 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: ott_auth
       POSTGRES_USER: ott_user
-      POSTGRES_PASSWORD: ott_password_2025
-      JWT_SECRET: your_jwt_secret_key_change_this_in_production
-      JWT_REFRESH_SECRET: your_refresh_secret_key_change_this_in_production
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.lab}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env.lab}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env.lab}"
       ELASTICSEARCH_URL: http://elasticsearch:9200
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ott_detection_2025
-      CDN_SHARED_SECRET: your_cdn_secret_key_change_this_in_production
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env.lab}"
+      MAX_UPLOAD_FILE_SIZE_MB: 2048
+      LOGIN_RATE_LIMIT_MAX: 200
+      LOGIN_RATE_LIMIT_WINDOW_MS: 900000
+      CDN_SHARED_SECRET: "${CDN_SHARED_SECRET:?Set CDN_SHARED_SECRET in .env.lab}"
       EDGE_ID: edge-local
       EDGE_DEFAULT_URL: http://localhost:8081
       EDGE_KR_URL: http://localhost:8081
@@ -120,9 +125,9 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./origin/hls:/var/www/hls
-      - ./origin/source:/var/www/source
-      - ./origin/thumbnails:/var/www/thumbnails
+      - ./01_platform/01_origin/hls:/var/www/hls
+      - ./01_platform/01_origin/source:/var/www/source
+      - ./01_platform/01_origin/thumbnails:/var/www/thumbnails
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,37 +137,48 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  scrubber-gateway:
+  access-gateway:
     build:
-      context: ./scrubber
+      context: ./01_platform/02_access_gateway
       dockerfile: Dockerfile.gateway
-    container_name: ott-scrubber-gateway
+    container_name: ott-access-gateway
     environment:
       EDGE_ID: edge-local
     ports:
       - "8081:80"
     volumes:
-      - ./scrubber/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
-      - ./scrubber/lua:/usr/local/openresty/nginx/lua:ro
-      - scrubber_logs:/var/log/nginx
+      - ./01_platform/02_access_gateway/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./01_platform/02_access_gateway/lua:/usr/local/openresty/nginx/lua:ro
+      - access_gateway_logs:/var/log/nginx
+      - access_gateway_cache:/var/cache/nginx
     depends_on:
       - origin-nginx
-      - scrubber-api
+      - access-api
     restart: unless-stopped
 
-  detection-engine:
+  graph-pipeline:
     build:
-      context: ./detection/engine
-    container_name: ott-detection-engine
+      context: ./01_platform/05_graph_pipeline/service
+    container_name: ott-graph-pipeline
     environment:
+      LOG_SOURCE: elasticsearch
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_INDEX: access-gateway-nginx-*,scrubber-nginx-*,filebeat-*,.ds-access-gateway-nginx-*,.ds-scrubber-nginx-*,.ds-filebeat-*,ott-api-events-*
+      ES_POLL_SIZE: 5000
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ott_detection_2025
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env.lab}"
+      NEO4J_DATABASE: neo4j
+      LOG_LEVEL: INFO
+      ENABLE_OPERATIONAL_AUDIT: "false"
+      GRAPH_PIPELINE_STATE_FILE: /var/lib/graph-pipeline/checkpoint.json
     volumes:
-      - scrubber_logs:/var/log/scrubber:ro
+      - access_gateway_logs:/var/log/access-gateway:ro
+      - graph_pipeline_state:/var/lib/graph-pipeline
     depends_on:
       - neo4j
-      - scrubber-gateway
+      - elasticsearch
+      - access-gateway
     restart: unless-stopped
 
   filebeat:
@@ -171,13 +187,13 @@ services:
     user: root
     command: ["filebeat", "-e", "-strict.perms=false"]
     volumes:
-      - ./log-system/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - scrubber_logs:/var/log/scrubber:ro
+      - ./01_platform/04_observability/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - access_gateway_logs:/var/log/access-gateway:ro
       - origin_logs:/var/log/origin:ro
       - filebeat_data:/usr/share/filebeat/data
     depends_on:
       - elasticsearch
-      - scrubber-gateway
+      - access-gateway
       - origin-nginx
     restart: unless-stopped
 
@@ -194,28 +210,29 @@ services:
 
   origin-web:
     build:
-      context: ./origin/web
+      context: ./01_platform/01_origin/web
     container_name: ott-origin-web
     environment:
       VITE_API_URL: http://localhost:8081
+      VITE_API_UPLOAD_URL: http://localhost:3001
       VITE_CDN_URL: http://localhost:8081
     ports:
       - "5173:3000"
     depends_on:
-      - scrubber-api
-      - scrubber-gateway
+      - access-api
+      - access-gateway
     restart: unless-stopped
 
-  scrubber-console:
+  access-console:
     build:
-      context: ./scrubber/console
-    container_name: ott-scrubber-console
+      context: ./01_platform/02_access_gateway/console
+    container_name: ott-access-console
     environment:
       VITE_API_URL: http://localhost:8081
     ports:
       - "5174:3000"
     depends_on:
-      - scrubber-api
+      - access-api
     restart: unless-stopped
 
 volumes:
@@ -223,6 +240,8 @@ volumes:
   neo4j_data:
   neo4j_logs:
   elasticsearch_data:
-  scrubber_logs:
+  access_gateway_logs:
+  access_gateway_cache:
   origin_logs:
   filebeat_data:
+  graph_pipeline_state:

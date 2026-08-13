@@ -1,0 +1,147 @@
+---
+- name: Prepare fresh OS on every server, Edge, and Client Pi
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    deployment_admin_user: ottadmin
+    deployment_public_key_path: >-
+      {{ lookup('env', 'HOME') }}/.ssh/ott_lab_ed25519.pub
+    docker_apt_architecture_map:
+      aarch64: arm64
+      arm64: arm64
+      x86_64: amd64
+      amd64: amd64
+    docker_apt_architecture: >-
+      {{ docker_apt_architecture_map.get(ansible_architecture, ansible_architecture) }}
+
+  pre_tasks:
+    - name: Require Raspberry Pi OS or Debian-family Linux
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == "Debian"
+          - ansible_distribution_release | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} must run Raspberry Pi OS or Debian-family Linux.
+
+    - name: Check the deployment public key on ott-control
+      ansible.builtin.stat:
+        path: "{{ deployment_public_key_path }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: deployment_public_key_file
+
+    - name: Require the deployment public key
+      ansible.builtin.assert:
+        that:
+          - deployment_public_key_file.stat.exists
+          - deployment_public_key_file.stat.isreg
+        fail_msg: >-
+          Create ~/.ssh/ott_lab_ed25519 and its .pub file on ott-control first.
+      run_once: true
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - gnupg
+          - python3
+          - rsync
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create the APT keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the Docker repository signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Configure the Docker repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/debian
+          Suites: {{ ansible_distribution_release }}
+          Components: stable
+          Architectures: {{ docker_apt_architecture }}
+          Signed-By: /etc/apt/keyrings/docker.asc
+
+    - name: Install Docker Engine and Compose
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Start Docker on boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the key-only deployment account
+      ansible.builtin.user:
+        name: "{{ deployment_admin_user }}"
+        create_home: true
+        shell: /bin/bash
+        groups: docker
+        append: true
+
+    - name: Create the deployment account SSH directory
+      ansible.builtin.file:
+        path: "/home/{{ deployment_admin_user }}/.ssh"
+        state: directory
+        owner: "{{ deployment_admin_user }}"
+        group: "{{ deployment_admin_user }}"
+        mode: "0700"
+
+    - name: Install the deployment public key
+      ansible.builtin.copy:
+        dest: "/home/{{ deployment_admin_user }}/.ssh/authorized_keys"
+        owner: "{{ deployment_admin_user }}"
+        group: "{{ deployment_admin_user }}"
+        mode: "0600"
+        content: "{{ lookup('file', deployment_public_key_path) | trim }}\n"
+
+    - name: Create empty Origin media directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ deployment_admin_user }}"
+        group: "{{ deployment_admin_user }}"
+        mode: "0755"
+      loop:
+        - "{{ origin_hls_dir }}"
+        - "{{ origin_source_dir }}"
+        - "{{ origin_thumbnail_dir }}"
+      when: inventory_hostname in groups["origin_api"]
+
+    - name: Report the prepared device
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is ready. Future deployment uses
+          {{ deployment_admin_user }} with the ott-control SSH key.

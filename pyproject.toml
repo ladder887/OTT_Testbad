@@ -1,7 +1,7 @@
 [project]
 name = "ott-testbad"
 version = "0.1.0"
-description = "Add your description here"
+description = "CDN-backed OTT telemetry and logical-client experiment tooling"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = []
