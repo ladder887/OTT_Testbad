@@ -367,14 +367,108 @@ done
 
 ## 12. VOD와 LIVE 업로드
 
+### 12.1 관리 화면과 첫 VOD
+
 브라우저에서 `http://192.168.0.101:5173/manage`를 연다.
 
 - email: `admin@ott.com`
 - password: `ottlab1234`
 
-짧은 VOD 한 개를 먼저 올리고 1080p/720p 변환, Web 목록, Origin/Edge 재생을 확인한
-후 나머지를 한 개씩 올린다. Raspberry Pi software encoding이므로 동시에 여러 개를
-올리지 않는다.
+첫 VOD는 다음처럼 입력한다.
+
+| 항목 | 값 |
+|---|---|
+| 콘텐츠 ID | `movie_001` |
+| HLS 경로 | `cat1` |
+| 콘텐츠 타입 | `콘텐츠(VOD)` |
+| 해상도 | 1080p와 720p 모두 선택 |
+| 원본 영상 | 필수 |
+| 썸네일 | 선택 |
+
+**저장** 후 성공 메시지가 나올 때까지 새로고침하지 않는다. 업로드 100% 뒤에도 FFmpeg
+변환 시간이 남을 수 있다. 완료되면 홈에서 `movie_001`을 30초 재생하고 두 해상도를
+확인한다.
+
+첫 VOD가 정상일 때만 나머지를 한 개씩 올린다. 기존 DB와 같은 mapping을 사용한다.
+
+```text
+movie_001 -> cat1
+movie_002 -> cat2
+...
+movie_013 -> cat13
+```
+
+새 DB에는 `movie_001~004` metadata가 이미 있으므로 같은 ID로 업로드해 update한다.
+별도 `vod_001` 같은 ID를 만들면 실제 HLS가 없는 seed row가 남아 최종 검증이 실패할
+수 있다. Raspberry Pi software encoding이므로 동시에 여러 파일을 올리지 않는다.
+
+### 12.2 LIVE 세 개
+
+`live_001`, `live_002`, `live_003`을 다음 조건으로 한 개씩 등록한다.
+
+| 항목 | 값 |
+|---|---|
+| 콘텐츠 ID / HLS 경로 | 둘 다 같은 `live_00N` 값 |
+| 콘텐츠 타입 | `라이브(LIVE)` |
+| 해상도 | 1080p와 720p 모두 선택 |
+| 원본 영상 | 필수 |
+
+현재 LIVE는 외부 RTMP ingest가 아니라 업로드한 파일을 FFmpeg가 반복 재생하는 synthetic
+loop LIVE다. 실제 방송 ingest와 동일한 구조가 아니다. 세 LIVE를 각각 30초 이상
+재생해 rolling playlist가 유지되는지 확인한다.
+
+### 12.3 Origin media 검사
+
+```bash
+ssh -i ~/.ssh/ott_lab_ed25519 ottadmin@192.168.0.101
+cd ~/OTT_Testbad
+
+python3 03_experiments/04_data_tools/inventory_hls.py \
+  --root /srv/ott-media/hls
+
+python3 03_experiments/04_data_tools/verify_live_hls.py \
+  --root /srv/ott-media/hls \
+  --wait-seconds 12 \
+  --minimum-live 3
+
+exit
+```
+
+`inventory_hls.py`의 통과 조건은 VOD 13개 이상, LIVE 3개 이상, 오류 0개, 모든
+콘텐츠의 1080p/720p 존재다. LIVE 검사는 12초를 기다린 뒤 playlist가 전진해야 성공한다.
+
+### 12.4 Elasticsearch와 Kibana 확인
+
+Kibana는 로그를 수집하지 않는다. Edge Filebeat와 API가 Elasticsearch에 저장한 로그를
+보는 UI이므로 data view나 dashboard가 없어도 수집과 Graph Pipeline은 동작한다.
+
+먼저 실제 문서 수를 확인한다.
+
+```bash
+curl -fsS 'http://192.168.0.120:9200/access-gateway-nginx-*/_count?pretty'
+curl -fsS 'http://192.168.0.120:9200/ott-api-events-*/_count?pretty'
+```
+
+404 또는 `count: 0`이면 Web에서 콘텐츠를 탐색하고 30초 재생한 뒤 10초 후 다시
+확인한다.
+
+`http://192.168.0.120:5601`에서 다음 data view 두 개를 한 번 만든다.
+
+| Name | Index pattern | Timestamp field |
+|---|---|---|
+| `Edge Access Logs` | `access-gateway-nginx-*` | `@timestamp` |
+| `OTT API Events` | `ott-api-events-*` | `@timestamp` |
+
+화면 경로는 **Management → Stack Management → Kibana → Data Views → Create data
+view**다. 오른쪽에 access index가 `Data stream`으로 보여도 정상이다.
+
+Discover에서 시간 범위를 `Last 24 hours`로 설정하고 다음을 확인한다.
+
+- `Edge Access Logs`: `client_ip`, `edge_server`, `request_uri`, `status`, `cache_status`
+- `OTT API Events`: `event_kind`, `client_ip`, `token_content_id`
+
+dashboard는 지금 만들지 않는다. dashboard 유무는 원본 로그, Neo4j, Graph Pipeline,
+학습 dataset에 영향을 주지 않는다.
 
 목표 baseline:
 
@@ -382,8 +476,25 @@ done
 - LIVE 3개 이상
 - 모든 콘텐츠에 1080p/720p playlist
 - LIVE media sequence가 계속 증가
+- 두 Elasticsearch 대상에 document 존재
+- 두 Kibana data view에서 document 조회 가능
 
 ## 13. logical client 100개 실행
+
+### 13.1 배포 전 조건
+
+- `ott-user1~10`의 유선 `eth0`와 `.131~.140` 고정 IP가 정상이어야 한다.
+- 공유기 DHCP에서 `.151~.250`을 반드시 제외한다.
+- 17대 repository가 `01_sync_repository.yml`로 같은 commit이어야 한다.
+- VOD 13개, LIVE 3개와 Elasticsearch 검사를 통과해야 한다.
+
+```bash
+bash scripts/ansible.sh client_nodes -m ping
+```
+
+10대 모두 `pong`일 때만 배포한다.
+
+### 13.2 배포
 
 ```bash
 bash scripts/run.sh playbooks/03_deploy_clients.yml
@@ -408,6 +519,21 @@ ott-user10 .140 -> lc091~lc100 -> .241~.250
 `ipvlan`은 하나의 물리 `eth0`를 공유하면서 container마다 별도 source IP를 사용한다.
 공유기 DHCP에서 `.151~.250`을 제외해야 한다.
 
+Edge는 KR/JP/SG/US 순으로 반복 배정되어 각 Edge에 25개 client가 연결된다. P0~P4도
+20개씩 배정되지만 현재는 식별 label일 뿐 실제 bandwidth/delay/loss를 적용하지 않는다.
+
+PLAY RECAP에서 `ott-user1~10` 모두 `failed=0`, `unreachable=0`이어야 한다. Pi별 실행
+수를 다시 확인한다.
+
+```bash
+bash scripts/ansible.sh client_nodes -m shell \
+  -a 'docker ps --filter name=ott-lc -q | wc -l'
+```
+
+각 host의 `stdout`이 `10`이어야 한다.
+
+### 13.3 한 container의 설정과 IP 확인
+
 현재 logical client 기본 동작은 `idle`이다. 100개 container를 실행해 IP와 배포 구조를
 준비하지만 정상/공격 시청 scenario를 자동 실행하지는 않는다.
 
@@ -418,6 +544,9 @@ ssh -i ~/.ssh/ott_lab_ed25519 ottadmin@192.168.0.131
 cd ~/OTT_Testbad/03_experiments/07_generated/pi01
 docker compose ps
 
+docker inspect ott-lc001 \
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+
 docker compose exec -T lc001 \
   python /app/client_agent.py show-config
 
@@ -425,8 +554,34 @@ docker compose exec -T lc001 \
   python /app/client_agent.py probe
 ```
 
-`lc001` probe 결과는 `status: 200`, configured source IP `.151`, Edge `.111`이어야 한다.
-Edge log의 `client_ip`도 `.151`인지 확인해야 실제 source IP 분리가 검증된다.
+Docker IP 출력과 `configured_source_ip`는 `192.168.0.151`, Edge는 `.111`, probe status는
+200이어야 한다. 물리 Pi에서 자기 ipvlan IP로 ping이 실패하는 것은 ipvlan host 격리
+특성일 수 있으므로 container→Edge 요청으로 검사한다.
+
+```bash
+exit
+```
+
+### 13.4 전체 100개 Edge 통신 확인
+
+`ott-control`에서 실행한다.
+
+```bash
+bash scripts/run.sh playbooks/05_probe_clients.yml
+```
+
+이 playbook은 100개 container 안에서 각자 배정된 Edge로 probe한다. 모든 Client Pi가
+`failed=0`이고 각 host에 `all 10 logical clients reached their assigned Edge`가 나와야
+한다.
+
+Kibana `Edge Access Logs`에서 시간 범위를 `Last 15 minutes`로 두고 다음 KQL을 사용한다.
+
+```text
+http_user_agent : OTT-TNSM-Probe*
+```
+
+`client_ip`가 `.151~.250`으로 분리되고 `edge_server`가 네 Edge로 분산되는지 확인한다.
+이 단계는 통신 기반 검증이며 정상/공격 시청 데이터 수집은 아직 시작하지 않는다.
 
 ## 14. 전체 검증
 
@@ -444,6 +599,9 @@ bash scripts/run.sh playbooks/04_verify.yml
 - 필수 platform container 실행
 - Pi마다 logical client 10개 실행
 - 일곱 health endpoint 응답
+
+`05_probe_clients.yml`은 100개 client의 Edge 통신을 검사하고, `04_verify.yml`은 media,
+DB, LIVE, container, endpoint 전체 상태를 검사한다. 둘은 검사 범위가 다르다.
 
 이 playbook은 정상/공격 시청 traffic과 model 학습을 실행하지 않는다.
 
@@ -469,6 +627,7 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | `playbooks/02_deploy_platform.yml` | Storage, Origin, Edge, Processing 실행 |
 | `playbooks/03_deploy_clients.yml` | Pi마다 logical client 10개 실행 |
 | `playbooks/04_verify.yml` | media, DB, LIVE, container, endpoint 검증 |
+| `playbooks/05_probe_clients.yml` | 100개 logical client의 Edge 통신 검증 |
 | `playbooks/90_stop_clients.yml` | logical client 정지 |
 
 ## 17. 자주 발생하는 오류
@@ -485,6 +644,9 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | repository 인증 실패 | public read 또는 17대 deploy credential 설정 |
 | `inventory/lab.yml` 없음 | 최신 commit을 pull한 뒤 repository 동기화 재실행 |
 | media baseline 실패 | VOD/LIVE 수량, rendition, DB catalog 확인 |
+| Kibana data view가 source를 못 찾음 | Web 재생 후 10초 대기, Elasticsearch `_count` 확인 |
+| Discover가 비어 있음 | 올바른 data view와 `Last 24 hours` 시간 범위 확인 |
+| `05_probe_clients.yml` 실패 | 실패한 Pi/service를 찾아 수동 `client_agent.py probe` 실행 |
 | IP pool overlap/충돌 | DHCP에서 `.151~.250` 제외 |
 
 `docker compose down -v`는 DB와 volume을 삭제하므로 명확한 데이터 초기화 목적이

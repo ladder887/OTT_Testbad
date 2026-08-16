@@ -1,0 +1,54 @@
+---
+- name: Probe the assigned Edge from every logical client
+  hosts: client_nodes
+  serial: 2
+  gather_facts: false
+  become: false
+
+  vars:
+    client_compose_directory: >-
+      {{ project_root }}/03_experiments/07_generated/{{ physical_host_id }}
+
+  tasks:
+    - name: Read logical-client service names
+      ansible.builtin.command:
+        argv: [docker, compose, config, --services]
+        chdir: "{{ client_compose_directory }}"
+      register: logical_client_services
+      changed_when: false
+
+    - name: Require 10 configured logical clients
+      ansible.builtin.assert:
+        that:
+          - logical_client_services.stdout_lines | length == logical_clients_per_host
+        fail_msg: >-
+          {{ inventory_hostname }} has
+          {{ logical_client_services.stdout_lines | length }} configured services;
+          expected {{ logical_clients_per_host }}.
+
+    - name: Request the assigned Edge from each logical client
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - exec
+          - -T
+          - "{{ item }}"
+          - python
+          - /app/client_agent.py
+          - probe
+          - --timeout
+          - "10"
+          - --retries
+          - "3"
+        chdir: "{{ client_compose_directory }}"
+      loop: "{{ logical_client_services.stdout_lines }}"
+      loop_control:
+        label: "{{ inventory_hostname }} / {{ item }}"
+      changed_when: false
+
+    - name: Report successful probes
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: all {{ logical_clients_per_host }} logical
+          clients reached their assigned Edge.
