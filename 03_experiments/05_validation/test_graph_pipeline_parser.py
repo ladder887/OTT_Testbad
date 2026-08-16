@@ -42,7 +42,7 @@ class GraphPipelineParserTest(unittest.TestCase):
                 "@timestamp": "2026-07-27T10:00:00Z",
                 "client_ip": "192.168.0.151",
                 "remote_addr": "192.168.0.151",
-                "request_uri": "/hls/movie_001/720p/seg_00001.ts",
+                "request_uri": "/hls/video_01/720p/seg_00001.ts",
                 "query_string": "token=sample&real_ip=10.0.0.9",
                 "request_method": "GET",
                 "status": 200,
@@ -58,7 +58,7 @@ class GraphPipelineParserTest(unittest.TestCase):
                 "@timestamp": "2026-07-27T10:00:01Z",
                 "client_ip": "192.168.0.151",
                 "request_uri": "/api/playback/start",
-                "query_string": "content_id=movie_001&run_id=run-001",
+                "query_string": "content_id=video_01&run_id=run-001",
                 "request_method": "POST",
                 "cdn_token_id": "cdn_0123456789abcdef01234567",
                 "status": 200,
@@ -77,7 +77,7 @@ class GraphPipelineParserTest(unittest.TestCase):
         )
 
         self.assertEqual(request_kind, "playback_start")
-        self.assertEqual(content_id, "movie_001")
+        self.assertEqual(content_id, "video_01")
         self.assertEqual(parsed["cdn_token_id"], "cdn_0123456789abcdef01234567")
         self.assertEqual(parsed["run_id"], "run-001")
 

@@ -38,8 +38,8 @@ class HlsInventoryTest(unittest.TestCase):
     def test_vod_and_live_are_classified(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            self._write_content(root / "video_001", endlist=True)
-            self._write_content(root / "live_001", endlist=False)
+            self._write_content(root / "video_01", endlist=True)
+            self._write_content(root / "live_01", endlist=False)
 
             payload = INVENTORY.build_inventory(root)
             self.assertEqual(payload["summary"]["contents"], 2)
@@ -50,7 +50,7 @@ class HlsInventoryTest(unittest.TestCase):
     def test_missing_master_variant_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            content_dir = root / "video_001"
+            content_dir = root / "video_01"
             self._write_content(content_dir, endlist=True)
             (content_dir / "master.m3u8").write_text(
                 "#EXTM3U\n"

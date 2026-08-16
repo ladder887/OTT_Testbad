@@ -223,7 +223,7 @@ function ContentManagePage() {
                   type="text"
                   value={form.content_id}
                   onChange={(e) => setForm((prev) => ({ ...prev, content_id: e.target.value }))}
-                  placeholder="예: live_003"
+                  placeholder={form.content_type === 'live' ? '예: live_01' : '예: video_01'}
                 />
               </label>
 
@@ -257,7 +257,7 @@ function ContentManagePage() {
                   type="text"
                   value={form.hls_path}
                   onChange={(e) => setForm((prev) => ({ ...prev, hls_path: e.target.value }))}
-                  placeholder="예: live_001, cat1"
+                  placeholder={form.content_type === 'live' ? '예: live_01' : '예: video_01'}
                 />
               </label>
 

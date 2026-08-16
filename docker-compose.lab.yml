@@ -74,8 +74,8 @@ services:
       -lc '
       set -e;
       SRC="$${LIVE_SOURCE_FILE:-/source/sample.mp4}";
-      mkdir -p /var/www/content/live_001/1080p /var/www/content/live_001/720p;
-      cat > /var/www/content/live_001/master.m3u8 <<"EOF"
+      mkdir -p /var/www/content/live_01/1080p /var/www/content/live_01/720p;
+      cat > /var/www/content/live_01/master.m3u8 <<"EOF"
       #EXTM3U
       #EXT-X-STREAM-INF:BANDWIDTH=3128000,RESOLUTION=1920x1080,NAME="1080p"
       1080p/playlist.m3u8
@@ -86,8 +86,8 @@ services:
         echo "Waiting for live source file: $$SRC";
         sleep 5;
       done;
-      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -b:v 3000k -c:a aac -b:a 128k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_001/1080p/seg_%05d.ts" "/var/www/content/live_001/1080p/playlist.m3u8" &
-      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -vf scale=1280:720 -b:v 1500k -c:a aac -b:a 96k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_001/720p/seg_%05d.ts" "/var/www/content/live_001/720p/playlist.m3u8"
+      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -b:v 3000k -c:a aac -b:a 128k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_01/1080p/seg_%05d.ts" "/var/www/content/live_01/1080p/playlist.m3u8" &
+      ffmpeg -re -stream_loop -1 -i "$$SRC" -c:v libx264 -preset ultrafast -vf scale=1280:720 -b:v 1500k -c:a aac -b:a 96k -f hls -hls_time 2 -hls_list_size 12 -hls_flags delete_segments+append_list+independent_segments+omit_endlist -hls_segment_filename "/var/www/content/live_01/720p/seg_%05d.ts" "/var/www/content/live_01/720p/playlist.m3u8"
       '
     restart: unless-stopped
 

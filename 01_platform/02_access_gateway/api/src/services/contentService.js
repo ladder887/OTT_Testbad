@@ -1,108 +1,3 @@
-const DEFAULT_CONTENTS = [
-  {
-    id: 'movie_001',
-    hlsPath: 'cat1',
-    title: '지구달이1',
-    description: '지구달이 시리즈 1편',
-    thumbnail: '/thumbnails/cat1.jpg',
-    backdrop: '/thumbnails/cat1_backdrop.jpg',
-    duration: '3분 29초',
-    durationSec: 209,
-    year: 2025,
-    rating: '전체',
-    genre: ['영상', '시리즈'],
-    category: '콘텐츠',
-    contentType: 'vod',
-    featured: true,
-    availableResolutions: ['1080p', '720p'],
-  },
-  {
-    id: 'movie_002',
-    hlsPath: 'cat2',
-    title: '지구달이2',
-    description: '지구달이 시리즈 2편',
-    thumbnail: '/thumbnails/cat2.jpg',
-    backdrop: '/thumbnails/cat2_backdrop.jpg',
-    duration: '3분 15초',
-    durationSec: 195,
-    year: 2025,
-    rating: '전체',
-    genre: ['영상', '시리즈'],
-    category: '콘텐츠',
-    contentType: 'vod',
-    featured: false,
-    availableResolutions: ['1080p', '720p'],
-  },
-  {
-    id: 'movie_003',
-    hlsPath: 'cat3',
-    title: '지구달이3',
-    description: '지구달이 시리즈 3편',
-    thumbnail: '/thumbnails/cat3.jpg',
-    backdrop: '/thumbnails/cat3_backdrop.jpg',
-    duration: '2분 45초',
-    durationSec: 165,
-    year: 2025,
-    rating: '전체',
-    genre: ['영상', '시리즈'],
-    category: '콘텐츠',
-    contentType: 'vod',
-    featured: false,
-    availableResolutions: ['1080p', '720p'],
-  },
-  {
-    id: 'movie_004',
-    hlsPath: 'cat4',
-    title: '지구달이4',
-    description: '지구달이 시리즈 4편',
-    thumbnail: '/thumbnails/cat4.jpg',
-    backdrop: '/thumbnails/cat4_backdrop.jpg',
-    duration: '4분 10초',
-    durationSec: 250,
-    year: 2025,
-    rating: '전체',
-    genre: ['영상', '시리즈'],
-    category: '콘텐츠',
-    contentType: 'vod',
-    featured: false,
-    availableResolutions: ['1080p', '720p'],
-  },
-  {
-    id: 'live_001',
-    hlsPath: 'live_001',
-    title: '라이브 채널 1',
-    description: '실증랩 라이브 채널 1',
-    thumbnail: '/thumbnails/live_001.jpg',
-    backdrop: '/thumbnails/live_001_backdrop.jpg',
-    duration: 'LIVE',
-    durationSec: null,
-    year: 2026,
-    rating: '전체',
-    genre: ['라이브', '스포츠'],
-    category: '라이브',
-    contentType: 'live',
-    featured: false,
-    availableResolutions: ['1080p', '720p'],
-  },
-  {
-    id: 'live_002',
-    hlsPath: 'live_002',
-    title: '라이브 채널 2',
-    description: '실증랩 라이브 채널 2',
-    thumbnail: '/thumbnails/live_002.jpg',
-    backdrop: '/thumbnails/live_002_backdrop.jpg',
-    duration: 'LIVE',
-    durationSec: null,
-    year: 2026,
-    rating: '전체',
-    genre: ['라이브', '이벤트'],
-    category: '라이브',
-    contentType: 'live',
-    featured: false,
-    availableResolutions: ['1080p', '720p'],
-  },
-]
-
 let initPromise = null
 
 function normalizeArrayField(value, fallback) {
@@ -149,9 +44,6 @@ async function ensureContentsSchema(pgPool) {
   }
 
   initPromise = (async () => {
-    const tableCheckResult = await pgPool.query("SELECT to_regclass('public.contents') IS NOT NULL AS exists")
-    const contentsTableAlreadyExists = Boolean(tableCheckResult.rows[0]?.exists)
-
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS contents (
         id SERIAL PRIMARY KEY,
@@ -179,35 +71,19 @@ async function ensureContentsSchema(pgPool) {
     await pgPool.query('CREATE INDEX IF NOT EXISTS idx_contents_content_type ON contents(content_type)')
     await pgPool.query('CREATE INDEX IF NOT EXISTS idx_contents_category ON contents(category)')
 
-    // 기본 샘플 데이터는 테이블이 처음 생성된 경우에만 1회 삽입한다.
-    if (!contentsTableAlreadyExists) {
-      for (const item of DEFAULT_CONTENTS) {
-        await pgPool.query(
-          `INSERT INTO contents
-            (content_id, hls_path, title, description, thumbnail, backdrop, duration, duration_sec, year, rating, genre, category, content_type, featured, available_resolutions)
-           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-           ON CONFLICT (content_id) DO NOTHING`,
-          [
-            item.id,
-            item.hlsPath,
-            item.title,
-            item.description,
-            item.thumbnail,
-            item.backdrop,
-            item.duration,
-            item.durationSec,
-            item.year,
-            item.rating,
-            item.genre,
-            item.category,
-            item.contentType,
-            item.featured,
-            item.availableResolutions,
-          ]
+    // Remove only source-less placeholders created by the retired sample catalog.
+    await pgPool.query(`
+      DELETE FROM contents
+      WHERE source_path IS NULL
+        AND (content_id, hls_path) IN (
+          ('movie_001', 'cat1'),
+          ('movie_002', 'cat2'),
+          ('movie_003', 'cat3'),
+          ('movie_004', 'cat4'),
+          ('live_001', 'live_001'),
+          ('live_002', 'live_002')
         )
-      }
-    }
+    `)
   })().catch((error) => {
     initPromise = null
     throw error

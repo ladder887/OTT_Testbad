@@ -367,6 +367,22 @@ done
 
 ## 12. VOD와 LIVE 업로드
 
+이미 `video_01~video_13`, `live_01~live_03` 업로드를 마쳤다면 다시 업로드하지 않는다.
+최신 코드만 Origin에 반영한다.
+
+```bash
+cd ~/OTT_Testbad
+git pull --ff-only
+cd 02_deployment/09_remote-management
+bash scripts/run.sh playbooks/01_sync_repository.yml \
+  -e "deployment_revision=$(git rev-parse HEAD)" \
+  --limit ott-origin
+bash scripts/run.sh playbooks/02_deploy_platform.yml --limit ott-origin
+```
+
+마지막 명령은 API와 Web container를 다시 build하지만 `/srv/ott-media`의 원본, HLS,
+thumbnail은 삭제하지 않는다. 그 다음 12.3의 media와 DB 검사로 이동한다.
+
 ### 12.1 관리 화면과 첫 VOD
 
 브라우저에서 `http://192.168.0.101:5173/manage`를 연다.
@@ -378,37 +394,39 @@ done
 
 | 항목 | 값 |
 |---|---|
-| 콘텐츠 ID | `movie_001` |
-| HLS 경로 | `cat1` |
+| 콘텐츠 ID | `video_01` |
+| HLS 경로 | `video_01` |
 | 콘텐츠 타입 | `콘텐츠(VOD)` |
 | 해상도 | 1080p와 720p 모두 선택 |
 | 원본 영상 | 필수 |
 | 썸네일 | 선택 |
 
 **저장** 후 성공 메시지가 나올 때까지 새로고침하지 않는다. 업로드 100% 뒤에도 FFmpeg
-변환 시간이 남을 수 있다. 완료되면 홈에서 `movie_001`을 30초 재생하고 두 해상도를
+변환 시간이 남을 수 있다. 완료되면 홈에서 `video_01`을 30초 재생하고 두 해상도를
 확인한다.
 
-첫 VOD가 정상일 때만 나머지를 한 개씩 올린다. 기존 DB와 같은 mapping을 사용한다.
+첫 VOD가 정상일 때만 나머지를 한 개씩 올린다. 현재 구축에서 사용한 ID와 HLS 경로를
+바꾸지 않는다.
 
 ```text
-movie_001 -> cat1
-movie_002 -> cat2
+video_01 -> video_01
+video_02 -> video_02
 ...
-movie_013 -> cat13
+video_13 -> video_13
 ```
 
-새 DB에는 `movie_001~004` metadata가 이미 있으므로 같은 ID로 업로드해 update한다.
-별도 `vod_001` 같은 ID를 만들면 실제 HLS가 없는 seed row가 남아 최종 검증이 실패할
-수 있다. Raspberry Pi software encoding이므로 동시에 여러 파일을 올리지 않는다.
+콘텐츠 metadata는 관리자 업로드로만 생성된다. 예전 버전이 만들었던 source 없는 sample
+metadata는 최신 API를 다시 배포하면 제거된다. 이미 업로드한
+`video_01~video_13`과 HLS 파일은 변경하거나 다시 업로드하지 않는다. Raspberry Pi
+software encoding이므로 새 파일을 추가할 때는 동시에 여러 파일을 올리지 않는다.
 
 ### 12.2 LIVE 세 개
 
-`live_001`, `live_002`, `live_003`을 다음 조건으로 한 개씩 등록한다.
+`live_01`, `live_02`, `live_03`을 다음 조건으로 한 개씩 등록한다.
 
 | 항목 | 값 |
 |---|---|
-| 콘텐츠 ID / HLS 경로 | 둘 다 같은 `live_00N` 값 |
+| 콘텐츠 ID / HLS 경로 | 둘 다 같은 `live_0N` 값 |
 | 콘텐츠 타입 | `라이브(LIVE)` |
 | 해상도 | 1080p와 720p 모두 선택 |
 | 원본 영상 | 필수 |
@@ -431,11 +449,16 @@ python3 03_experiments/04_data_tools/verify_live_hls.py \
   --wait-seconds 12 \
   --minimum-live 3
 
+docker exec ott-postgres psql -U ott_user -d ott_auth -c \
+  "SELECT content_id, hls_path, content_type FROM contents ORDER BY content_id;"
+
 exit
 ```
 
 `inventory_hls.py`의 통과 조건은 VOD 13개 이상, LIVE 3개 이상, 오류 0개, 모든
 콘텐츠의 1080p/720p 존재다. LIVE 검사는 12초를 기다린 뒤 playlist가 전진해야 성공한다.
+DB 조회에는 `video_01~video_13`, `live_01~live_03`만 있어야 하며 각 `content_id`와
+`hls_path`는 같은 값이어야 한다.
 
 ### 12.4 Elasticsearch와 Kibana 확인
 

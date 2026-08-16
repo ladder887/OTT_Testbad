@@ -150,12 +150,4 @@ ON CONFLICT (email) DO UPDATE SET
   is_verified = true,
   updated_at = CURRENT_TIMESTAMP;
 
-INSERT INTO contents (content_id, hls_path, title, description, thumbnail, backdrop, duration, duration_sec, year, rating, genre, category, content_type, featured, available_resolutions)
-VALUES
-('movie_001', 'cat1', '지구달이1', '지구달이 시리즈 1편', '/thumbnails/cat1.jpg', '/thumbnails/cat1_backdrop.jpg', '3분 29초', 209, 2025, '전체', ARRAY['영상','시리즈'], '콘텐츠', 'vod', true, ARRAY['1080p','720p']),
-('movie_002', 'cat2', '지구달이2', '지구달이 시리즈 2편', '/thumbnails/cat2.jpg', '/thumbnails/cat2_backdrop.jpg', '3분 15초', 195, 2025, '전체', ARRAY['영상','시리즈'], '콘텐츠', 'vod', false, ARRAY['1080p','720p']),
-('movie_003', 'cat3', '지구달이3', '지구달이 시리즈 3편', '/thumbnails/cat3.jpg', '/thumbnails/cat3_backdrop.jpg', '2분 45초', 165, 2025, '전체', ARRAY['영상','시리즈'], '콘텐츠', 'vod', false, ARRAY['1080p','720p']),
-('movie_004', 'cat4', '지구달이4', '지구달이 시리즈 4편', '/thumbnails/cat4.jpg', '/thumbnails/cat4_backdrop.jpg', '4분 10초', 250, 2025, '전체', ARRAY['영상','시리즈'], '콘텐츠', 'vod', false, ARRAY['1080p','720p']),
-('live_001', 'live_001', '라이브 채널 1', '실증랩 라이브 채널 1', '/thumbnails/live_001.jpg', '/thumbnails/live_001_backdrop.jpg', 'LIVE', NULL, 2026, '전체', ARRAY['라이브','스포츠'], '라이브', 'live', false, ARRAY['1080p','720p']),
-('live_002', 'live_002', '라이브 채널 2', '실증랩 라이브 채널 2', '/thumbnails/live_002.jpg', '/thumbnails/live_002_backdrop.jpg', 'LIVE', NULL, 2026, '전체', ARRAY['라이브','이벤트'], '라이브', 'live', false, ARRAY['1080p','720p'])
-ON CONFLICT (content_id) DO NOTHING;
+-- Content metadata is created only through the administrator upload API.
