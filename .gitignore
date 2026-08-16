@@ -51,9 +51,6 @@ pnpm-debug.log*
 **/*.pem
 **/*.p12
 **/*.pfx
-**/.vault_pass*
-/02_deployment/09_remote-management/inventory/vault*.yml
-!/02_deployment/09_remote-management/inventory/vault.example.yml
 /02_deployment/09_remote-management/*.retry
 **/.ansible/
 

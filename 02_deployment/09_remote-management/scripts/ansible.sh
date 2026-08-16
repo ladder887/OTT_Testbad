@@ -5,20 +5,16 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANAGEMENT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="${HOME}/.venvs/ott-ansible"
 
-if [[ ! -x "${VENV_DIR}/bin/ansible-playbook" ]]; then
+if [[ ! -x "${VENV_DIR}/bin/ansible" ]]; then
   echo "Ansible is not installed. Run scripts/install_control_node.sh first." >&2
   exit 1
 fi
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: bash scripts/run.sh PLAYBOOK [ANSIBLE_OPTIONS...]" >&2
+  echo "Usage: bash scripts/ansible.sh HOST_PATTERN [ANSIBLE_OPTIONS...]" >&2
   exit 1
 fi
 
 export ANSIBLE_CONFIG="${MANAGEMENT_DIR}/ansible.cfg"
 cd "${MANAGEMENT_DIR}"
-echo "Ansible config: ${ANSIBLE_CONFIG}"
-echo "Inventory: ${MANAGEMENT_DIR}/inventory/hosts.yml"
-echo "Playbook command: ansible-playbook $*"
-echo
-exec "${VENV_DIR}/bin/ansible-playbook" "$@"
+exec "${VENV_DIR}/bin/ansible" "$@"

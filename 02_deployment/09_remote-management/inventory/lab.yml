@@ -1,0 +1,9 @@
+---
+# Closed-lab defaults. All services intentionally share one easy test value.
+lab_postgres_password: "ottlab1234"
+lab_neo4j_password: "ottlab1234"
+lab_jwt_secret: "ottlab1234"
+lab_jwt_refresh_secret: "ottlab1234"
+lab_cdn_shared_secret: "ottlab1234"
+lab_ott_admin_password: "ottlab1234"
+lab_ott_test_password: "ottlab1234"

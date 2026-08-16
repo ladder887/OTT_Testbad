@@ -6,19 +6,16 @@
   become: false
 
   pre_tasks:
-    - name: Load encrypted deployment secrets
+    - name: Load closed-lab settings
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../inventory/vault.yml"
-        name: vault_secrets
-      no_log: true
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
 
-    - name: Validate test account password
+    - name: Require the test account value
       ansible.builtin.assert:
         that:
-          - vault_secrets.vault_ott_test_password | length >= 8
-          - "'CHANGE_ME' not in vault_secrets.vault_ott_test_password"
-        fail_msg: Set the test account password in encrypted inventory/vault.yml.
-      no_log: true
+          - lab_settings.lab_ott_test_password | length > 0
+        fail_msg: Set lab_ott_test_password in inventory/lab.yml.
 
     - name: Check configured data interface
       ansible.builtin.stat:
@@ -70,8 +67,7 @@
         content: |
           CLIENT_PARENT_INTERFACE={{ client_parent_interface }}
           LOGICAL_CLIENT_IMAGE={{ logical_client_image }}
-          OTT_TEST_PASSWORD={{ vault_secrets.vault_ott_test_password }}
-      no_log: true
+          OTT_TEST_PASSWORD={{ lab_settings.lab_ott_test_password }}
 
     - name: Validate Pi-specific Compose
       ansible.builtin.command:

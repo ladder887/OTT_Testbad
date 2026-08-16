@@ -5,19 +5,16 @@
   become: false
 
   pre_tasks:
-    - name: Load encrypted deployment secrets
+    - name: Load closed-lab settings
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../inventory/vault.yml"
-        name: vault_secrets
-      no_log: true
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
 
-    - name: Validate Neo4j password
+    - name: Require the Neo4j technical minimum
       ansible.builtin.assert:
         that:
-          - vault_secrets.vault_neo4j_password | length >= 12
-          - "'CHANGE_ME' not in vault_secrets.vault_neo4j_password"
-        fail_msg: Set a real Neo4j password in encrypted inventory/vault.yml.
-      no_log: true
+          - lab_settings.lab_neo4j_password | length >= 8
+        fail_msg: inventory/lab.yml must use at least 8 characters for Neo4j.
 
   tasks:
     - name: Write Analysis Storage environment
@@ -25,8 +22,7 @@
         dest: "{{ project_root }}/{{ deployment_path }}/.env"
         mode: "0600"
         content: |
-          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
-      no_log: true
+          NEO4J_PASSWORD={{ lab_settings.lab_neo4j_password }}
 
     - name: Validate Analysis Storage Compose
       ansible.builtin.command:
@@ -55,27 +51,24 @@
   become: false
 
   pre_tasks:
-    - name: Load encrypted deployment secrets
+    - name: Load closed-lab settings
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../inventory/vault.yml"
-        name: vault_secrets
-      no_log: true
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
 
-    - name: Validate Origin and API secrets
+    - name: Require all closed-lab settings
       ansible.builtin.assert:
         that:
-          - vault_secrets[item] | length >= 12
-          - "'CHANGE_ME' not in vault_secrets[item]"
-        fail_msg: Set real deployment secrets in encrypted inventory/vault.yml.
+          - lab_settings[item] | length > 0
+        fail_msg: Set every required value in inventory/lab.yml.
       loop:
-        - vault_postgres_password
-        - vault_neo4j_password
-        - vault_jwt_secret
-        - vault_jwt_refresh_secret
-        - vault_cdn_shared_secret
-        - vault_ott_admin_password
-        - vault_ott_test_password
-      no_log: true
+        - lab_postgres_password
+        - lab_neo4j_password
+        - lab_jwt_secret
+        - lab_jwt_refresh_secret
+        - lab_cdn_shared_secret
+        - lab_ott_admin_password
+        - lab_ott_test_password
 
     - name: Inspect configured media directories
       ansible.builtin.stat:
@@ -103,17 +96,16 @@
         dest: "{{ project_root }}/{{ deployment_path }}/.env"
         mode: "0600"
         content: |
-          POSTGRES_PASSWORD={{ vault_secrets.vault_postgres_password }}
-          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
-          JWT_SECRET={{ vault_secrets.vault_jwt_secret }}
-          JWT_REFRESH_SECRET={{ vault_secrets.vault_jwt_refresh_secret }}
-          CDN_SHARED_SECRET={{ vault_secrets.vault_cdn_shared_secret }}
-          OTT_ADMIN_PASSWORD={{ vault_secrets.vault_ott_admin_password }}
-          OTT_TEST_PASSWORD={{ vault_secrets.vault_ott_test_password }}
+          POSTGRES_PASSWORD={{ lab_settings.lab_postgres_password }}
+          NEO4J_PASSWORD={{ lab_settings.lab_neo4j_password }}
+          JWT_SECRET={{ lab_settings.lab_jwt_secret }}
+          JWT_REFRESH_SECRET={{ lab_settings.lab_jwt_refresh_secret }}
+          CDN_SHARED_SECRET={{ lab_settings.lab_cdn_shared_secret }}
+          OTT_ADMIN_PASSWORD={{ lab_settings.lab_ott_admin_password }}
+          OTT_TEST_PASSWORD={{ lab_settings.lab_ott_test_password }}
           ORIGIN_HLS_DIR={{ origin_hls_dir }}
           ORIGIN_SOURCE_DIR={{ origin_source_dir }}
           ORIGIN_THUMBNAIL_DIR={{ origin_thumbnail_dir }}
-      no_log: true
 
     - name: Validate Origin and API Compose
       ansible.builtin.command:
@@ -179,19 +171,16 @@
   become: false
 
   pre_tasks:
-    - name: Load encrypted deployment secrets
+    - name: Load closed-lab settings
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../inventory/vault.yml"
-        name: vault_secrets
-      no_log: true
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
 
-    - name: Validate Neo4j password
+    - name: Require the Neo4j technical minimum
       ansible.builtin.assert:
         that:
-          - vault_secrets.vault_neo4j_password | length >= 12
-          - "'CHANGE_ME' not in vault_secrets.vault_neo4j_password"
-        fail_msg: Set a real Neo4j password in encrypted inventory/vault.yml.
-      no_log: true
+          - lab_settings.lab_neo4j_password | length >= 8
+        fail_msg: inventory/lab.yml must use at least 8 characters for Neo4j.
 
   tasks:
     - name: Write Graph Pipeline environment
@@ -199,8 +188,7 @@
         dest: "{{ project_root }}/{{ deployment_path }}/.env"
         mode: "0600"
         content: |
-          NEO4J_PASSWORD={{ vault_secrets.vault_neo4j_password }}
-      no_log: true
+          NEO4J_PASSWORD={{ lab_settings.lab_neo4j_password }}
 
     - name: Validate Graph Pipeline Compose
       ansible.builtin.command:
