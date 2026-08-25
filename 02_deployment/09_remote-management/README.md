@@ -708,6 +708,8 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | Discover가 비어 있음 | 올바른 data view와 `Last 24 hours` 시간 범위 확인 |
 | `05_probe_clients.yml` 실패 | 실패한 Pi/service를 찾아 수동 `client_agent.py probe` 실행 |
 | IP pool overlap/충돌 | DHCP에서 `.151~.250` 제외 |
+| HLS가 `500`이고 Edge log에 `variable "token_jti" not found`가 표시됨 | Git 갱신 전 Nginx 설정을 container가 계속 mount한 상태다. 최신 playbook의 `02_deploy_platform.yml --limit edge_nodes`를 실행해 네 Edge를 재생성한다. |
+| LIVE master playlist는 `200`이지만 하위 playlist 요청이 없고 브라우저에 CORS 오류가 표시됨 | LIVE 전용 Nginx location에 CORS header가 포함된 최신 commit을 동기화한 뒤 `02_deploy_platform.yml --limit edge_nodes`를 실행한다. |
 
 `docker compose down -v`는 DB와 volume을 삭제하므로 명확한 데이터 초기화 목적이
 아니면 실행하지 않는다.

@@ -150,9 +150,9 @@
         chdir: "{{ project_root }}/{{ deployment_path }}"
       changed_when: false
 
-    - name: Start Edge
+    - name: Recreate Edge with the current bind-mounted configuration
       ansible.builtin.command:
-        argv: [docker, compose, up, -d, --build]
+        argv: [docker, compose, up, -d, --build, --force-recreate]
         chdir: "{{ project_root }}/{{ deployment_path }}"
       changed_when: true
 
