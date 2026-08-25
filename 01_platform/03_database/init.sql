@@ -37,7 +37,6 @@ CREATE TABLE IF NOT EXISTS watch_history (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     content_id VARCHAR(100) NOT NULL,
     session_token VARCHAR(500),
-    label VARCHAR(100) DEFAULT 'normal',
     watch_duration INTEGER, -- seconds
     total_duration INTEGER,
     progress_percent DECIMAL(5,2),

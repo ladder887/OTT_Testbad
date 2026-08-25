@@ -12,7 +12,7 @@ function fromBase64Url(encoded) {
   return Buffer.from(encoded, 'base64url').toString('utf8')
 }
 
-function sanitizeOptionalTag(value, maxLength = 48) {
+function sanitizeOptionalTag(value, maxLength = 64) {
   if (value === undefined || value === null) {
     return ''
   }
@@ -24,43 +24,20 @@ function sanitizeOptionalTag(value, maxLength = 48) {
 }
 
 function buildCanonicalString(payload) {
-  const runId = sanitizeOptionalTag(payload.rid, 48)
-  const scenarioId = sanitizeOptionalTag(payload.scn, 24).toUpperCase()
-  const label = sanitizeOptionalTag(payload.lbl, 48)
-  const datasetLabel = sanitizeOptionalTag(payload.dsl, 48)
-  const deviceId = sanitizeOptionalTag(payload.dev, 64)
-  const logicalClientId = sanitizeOptionalTag(payload.lc, 64)
-  const physicalHostId = sanitizeOptionalTag(payload.ph, 64)
-  const networkProfileId = sanitizeOptionalTag(payload.np, 32)
-
-  const parts = [
+  return [
     `uid=${payload.uid}`,
     `sid=${payload.sid}`,
+    `pid=${payload.pid}`,
+    `jti=${payload.jti}`,
     `cid=${payload.cid}`,
     `path=${payload.path}`,
     `edge=${payload.edge}`,
+    `iat=${payload.iat}`,
     `exp=${payload.exp}`,
-    `rid=${runId}`,
-    `scn=${scenarioId}`,
-    `lbl=${label}`,
-  ]
-  if (payload.dsl !== undefined) {
-    parts.push(`dsl=${datasetLabel}`)
-  }
-  if (payload.dev !== undefined) {
-    parts.push(`dev=${deviceId}`)
-  }
-  if (payload.lc !== undefined) {
-    parts.push(`lc=${logicalClientId}`)
-  }
-  if (payload.ph !== undefined) {
-    parts.push(`ph=${physicalHostId}`)
-  }
-  if (payload.np !== undefined) {
-    parts.push(`np=${networkProfileId}`)
-  }
-
-  return parts.join('&')
+    `ip_bind=${payload.ip_bind ? '1' : '0'}`,
+    `client_ip=${payload.client_ip || ''}`,
+    `owner_device_id=${sanitizeOptionalTag(payload.odv, 64)}`,
+  ].join('&')
 }
 
 function buildSignature(payload) {
@@ -75,27 +52,20 @@ function buildSignature(payload) {
 function issuePlaybackToken({
   userId,
   sessionId,
+  playbackId = crypto.randomUUID(),
   contentId,
   hlsPath,
   edgeId,
   clientIp,
   ipBind = false,
-  runId = '',
-  scenarioId = '',
-  label = '',
-  datasetLabel = '',
-  deviceId = '',
-  logicalClientId = '',
-  physicalHostId = '',
-  networkProfileId = '',
+  ownerDeviceId = '',
 }) {
-  const resolvedLabel = sanitizeOptionalTag(label || datasetLabel, 48)
-  const resolvedDatasetLabel = sanitizeOptionalTag(datasetLabel || resolvedLabel, 48)
-
   const now = Math.floor(Date.now() / 1000)
   const payload = {
     uid: String(userId),
     sid: String(sessionId),
+    pid: sanitizeOptionalTag(playbackId, 64),
+    jti: crypto.randomUUID(),
     cid: String(contentId),
     path: String(hlsPath),
     edge: String(edgeId),
@@ -103,14 +73,7 @@ function issuePlaybackToken({
     exp: now + CDN_TOKEN_TTL_SEC,
     ip_bind: Boolean(ipBind),
     client_ip: clientIp || '',
-    rid: sanitizeOptionalTag(runId, 48),
-    scn: sanitizeOptionalTag(scenarioId, 24).toUpperCase(),
-    lbl: resolvedLabel,
-    dsl: resolvedDatasetLabel,
-    dev: sanitizeOptionalTag(deviceId, 64),
-    lc: sanitizeOptionalTag(logicalClientId, 64),
-    ph: sanitizeOptionalTag(physicalHostId, 64),
-    np: sanitizeOptionalTag(networkProfileId, 32),
+    odv: sanitizeOptionalTag(ownerDeviceId, 64),
   }
 
   const token = toBase64Url(JSON.stringify(payload))
@@ -121,6 +84,12 @@ function issuePlaybackToken({
     sig,
     payload,
   }
+}
+
+function tokenGraphIdFromJti(jti) {
+  if (!jti) return ''
+  const digest = crypto.createHash('sha256').update(String(jti)).digest('hex')
+  return `cdn_${digest.slice(0, 24)}`
 }
 
 function extractHlsPathFromUri(uri) {
@@ -181,4 +150,5 @@ module.exports = {
   issuePlaybackToken,
   verifyPlaybackToken,
   extractHlsPathFromUri,
+  tokenGraphIdFromJti,
 }

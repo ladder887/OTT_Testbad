@@ -49,19 +49,18 @@ router.get('/watch-history', authenticateToken, async (req, res) => {
 router.post('/watch-history', authenticateToken, async (req, res) => {
   const pgPool = req.app.locals.pgPool;
   const { content_id, watch_duration, total_duration, session_token } = req.body;
-  const label = String(req.body?.label || req.body?.dataset_label || req.body?.scenario_label || 'normal').trim() || 'normal';
 
   try {
     const progress_percent = (watch_duration / total_duration) * 100;
     const completed = progress_percent >= 90;
 
     const result = await pgPool.query(
-      `INSERT INTO watch_history (user_id, content_id, session_token, label, watch_duration, total_duration, progress_percent, completed, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO watch_history (user_id, content_id, session_token, watch_duration, total_duration, progress_percent, completed, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id, content_id) 
-       DO UPDATE SET label = $4, watch_duration = $5, total_duration = $6, progress_percent = $7, completed = $8, ip_address = $9, updated_at = NOW()
+       DO UPDATE SET watch_duration = $4, total_duration = $5, progress_percent = $6, completed = $7, ip_address = $8, updated_at = NOW()
        RETURNING *`,
-      [req.user.userId, content_id, session_token, label, watch_duration, total_duration, progress_percent, completed, req.ip]
+      [req.user.userId, content_id, session_token, watch_duration, total_duration, progress_percent, completed, req.ip]
     );
 
     res.json({ history: result.rows[0] });

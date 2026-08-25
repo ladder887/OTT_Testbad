@@ -62,18 +62,26 @@ docker compose --env-file .env.lab -f docker-compose.lab.yml down -v
 | Kibana | http://localhost:5601 |
 | Neo4j Browser | http://localhost:7474 |
 
-## 확장 실험 시작 순서
+## 확장 실험 준비 순서
 
-1. `03_experiments/03_orchestration/generate_logical_client_inventory.py`로 배치 파일을 생성한다.
-2. 한 Raspberry Pi에서 10개 `ipvlan` logical clients의 고유 IP를 검증한다.
-3. N1/N6/A1/A5 smoke run으로 Edge, Elasticsearch, Neo4j 적재를 대조한다.
-4. 20/40/60/80/100 concurrent client ramp test를 통과한 뒤 main collection을 시작한다.
+1. 새 token/log/session schema를 Origin/API, Edge 4대, Graph Processing에 재배포한다.
+2. VOD 하나를 재생한 뒤 `validate_telemetry_contract.py`를 통과시킨다.
+3. `generate_logical_client_inventory.py`로 배치 파일을 생성하고 한 Raspberry Pi에서 10개
+   `ipvlan` logical clients의 고유 source IP를 검증한다.
+4. N1/N6/A1/A5 runner를 구현한 뒤 smoke run으로 Elasticsearch와 Neo4j 적재를 대조한다.
+5. replay idempotency와 수집 완전성 validator를 구현하고 20/40/60/80/100-client ramp
+   test를 통과한 뒤 main collection을 시작한다.
+
+현재 logical client image는 배치와 통신을 확인하는 probe runtime이다. 정상/공격 시청
+runner는 아직 구현되지 않았으므로 현재 image만으로 main collection을 시작하지 않는다.
 
 ## 원격 장비 관리
 
 실제 VOD/LIVE media는 Origin Raspberry Pi에만 두고 Git 배포에서 제외한다. 모든
 장비는 2026-08-07 기준 새 OS로 초기화됐으며, Origin media는 플랫폼 배포 후 다시
-업로드한다. 목표 baseline은 VOD 13개 이상, LIVE 3개 이상, 1080p/720p다.
+업로드한다. 현재 Origin에는 VOD `video_01~video_15`가 있고 LIVE는 아직 없다. 먼저
+`live_01~live_03` rolling 검증을 완료하며, main 실험 목표는 controlled LIVE 4개와
+실제 입력 검증 channel 1개다. 모든 실험 콘텐츠는 1080p/720p rendition을 사용한다.
 
 고정 IP 이후 설치 명령과 Ansible 파일별 역할은
 [원격 설치 도구 README](02_deployment/09_remote-management/README.md)에 있다.

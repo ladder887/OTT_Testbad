@@ -32,6 +32,7 @@ python 03_experiments/05_validation/validate_inventory.py `
 - logical client image의 설정 출력/Edge health probe: 구현됨
 - N1~N7/A1~A7 traffic runner: 재구현 필요
 - A1/A6/A7 cross-container coordinator: 미구현
-- run manifest와 ES/Neo4j 대조 validator: schema만 정의, 실행 코드 미구현
+- run manifest token binding schema/기록 도구: 구현됨
+- manifest와 ES/Neo4j request/session 대조 validator: 미구현
 
 미구현 항목을 완료하기 전에는 main collection을 시작하지 않는다.

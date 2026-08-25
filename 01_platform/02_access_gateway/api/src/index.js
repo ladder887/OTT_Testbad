@@ -115,11 +115,6 @@ ensureContentsSchema(pgPool)
     console.error('Failed to initialize content schema or restore live streams:', error.message);
   });
 
-pgPool.query("ALTER TABLE watch_history ADD COLUMN IF NOT EXISTS label VARCHAR(100) DEFAULT 'normal'")
-  .catch((error) => {
-    console.error('Failed to ensure watch_history label column:', error.message);
-  });
-
 pgPool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_watch_history_user_content ON watch_history(user_id, content_id)')
   .catch((error) => {
     console.error('Failed to ensure watch_history unique index:', error.message);

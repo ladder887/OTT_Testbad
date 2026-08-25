@@ -23,7 +23,7 @@ curl -fsS 'http://192.168.0.120:9200/_cat/data_stream?v'
 
 | 이름 | 생성 주체 | 저장 내용 |
 |---|---|---|
-| `access-gateway-nginx-*` | 네 대의 Edge에 있는 Filebeat | HLS/API 요청, source IP, 응답, cache, token metadata |
+| `access-gateway-nginx-*` | 네 대의 Edge에 있는 Filebeat | HLS/API 요청, source IP, 응답, cache, 운영 token ID |
 | `ott-api-events-*` | Origin의 Access API | 탐색과 playback token 발급 이벤트 |
 
 각 대상의 문서 수는 다음 명령으로 확인한다.
@@ -85,11 +85,12 @@ request_method
 request_uri
 status
 bytes_sent
-response_time_ms
+request_time_sec
 cache_status
-token_run_id
-token_scenario_id
-token_logical_client_id
+cdn_token_id
+token_playback_id
+token_owner_account_id
+token_owner_device_id
 http_user_agent
 ```
 
@@ -99,11 +100,15 @@ logical client probe만 보려면 KQL 검색창에 다음을 입력한다.
 http_user_agent : OTT-TNSM-Probe*
 ```
 
-특정 logical client의 정식 playback 요청은 다음처럼 찾는다.
+특정 logical client의 정식 playback 요청은 inventory에 기록된 source IP로 찾는다.
 
 ```text
-token_logical_client_id : "lc001"
+client_ip : "192.168.0.151"
 ```
+
+`run_id`, scenario, label, logical client ID, physical host, network profile은
+학습 원본 로그에 저장하지 않는다. 해당 값은 별도 run manifest에서
+`cdn_token_id`로 결합한다.
 
 오류 응답과 cache hit 확인 예시는 다음과 같다.
 
@@ -122,11 +127,10 @@ cache_status : "HIT"
 event_kind
 client_ip
 status
-token_user_id
+cdn_token_id
+token_owner_account_id
+token_playback_id
 token_content_id
-token_run_id
-token_scenario_id
-token_logical_client_id
 token_ttl_sec
 ```
 
@@ -150,7 +154,7 @@ Elasticsearch 원본 데이터, Graph Pipeline, Neo4j, 학습 dataset에 영향�
 | Edge별 요청 수 | `Edge Access Logs` | Top values=`edge_server.keyword` |
 | 상태 코드 분포 | `Edge Access Logs` | Top values=`status` |
 | cache 상태 | `Edge Access Logs` | Top values=`cache_status.keyword` |
-| logical client별 요청 수 | `Edge Access Logs` | Top values=`token_logical_client_id.keyword` |
+| source IP별 요청 수 | `Edge Access Logs` | Top values=`client_ip.keyword` |
 | API 이벤트 종류 | `OTT API Events` | Top values=`event_kind.keyword` |
 
 dashboard 이름은 `OTT Experiment Monitoring`으로 저장한다. 이 dashboard는 운영 확인용일

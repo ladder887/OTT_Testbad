@@ -347,6 +347,28 @@ ott-storage
 playbook은 서비스 `.env` 작성, Compose 설정 검사, image build, container 실행, health
 대기를 수행한다. Origin media directory의 기존 파일은 삭제하지 않는다.
 
+### 11.1 token/session/log schema 변경 재배포
+
+2026-08-19 이후 코드는 playback token과 Edge/API log에서 run/scenario/label을
+제거하고 `token_jti`, `cdn_token_id`, `token_playback_id`를 사용한다. 이 변경은
+Origin/API, 네 Edge의 Nginx/Filebeat, Graph Processing을 함께 갱신해야 한다.
+
+제어 노드에서 최신 commit을 전체 장비에 동기화한 뒤 다음처럼 재배포한다.
+
+```bash
+cd ~/OTT_Testbad/02_deployment/09_remote-management
+
+bash scripts/run.sh playbooks/01_sync_repository.yml \
+  -e "deployment_revision=$(cd ~/OTT_Testbad && git rev-parse HEAD)"
+
+bash scripts/run.sh playbooks/02_deploy_platform.yml \
+  --limit 'ott-origin:edge_nodes:ott-processing'
+```
+
+배포 순간 이전에 발급된 playback token은 새 signature payload와 호환되지 않는다.
+재생 페이지를 새로 열어 새 token을 발급받으면 된다. VOD source/HLS 파일과 PostgreSQL
+content metadata는 삭제되지 않는다.
+
 endpoint 확인:
 
 ```bash
@@ -367,7 +389,7 @@ done
 
 ## 12. VOD와 LIVE 업로드
 
-이미 `video_01~video_13`, `live_01~live_03` 업로드를 마쳤다면 다시 업로드하지 않는다.
+이미 `video_01~video_15`, `live_01~live_03` 업로드를 마쳤다면 다시 업로드하지 않는다.
 최신 코드만 Origin에 반영한다.
 
 ```bash
@@ -417,7 +439,7 @@ video_13 -> video_13
 
 콘텐츠 metadata는 관리자 업로드로만 생성된다. 예전 버전이 만들었던 source 없는 sample
 metadata는 최신 API를 다시 배포하면 제거된다. 이미 업로드한
-`video_01~video_13`과 HLS 파일은 변경하거나 다시 업로드하지 않는다. Raspberry Pi
+`video_01~video_15`와 HLS 파일은 변경하거나 다시 업로드하지 않는다. Raspberry Pi
 software encoding이므로 새 파일을 추가할 때는 동시에 여러 파일을 올리지 않는다.
 
 ### 12.2 LIVE 세 개
@@ -455,9 +477,9 @@ docker exec ott-postgres psql -U ott_user -d ott_auth -c \
 exit
 ```
 
-`inventory_hls.py`의 통과 조건은 VOD 13개 이상, LIVE 3개 이상, 오류 0개, 모든
+`inventory_hls.py`의 통과 조건은 VOD 15개 이상, LIVE 3개 이상, 오류 0개, 모든
 콘텐츠의 1080p/720p 존재다. LIVE 검사는 12초를 기다린 뒤 playlist가 전진해야 성공한다.
-DB 조회에는 `video_01~video_13`, `live_01~live_03`만 있어야 하며 각 `content_id`와
+DB 조회에는 `video_01~video_15`, `live_01~live_03`만 있어야 하며 각 `content_id`와
 `hls_path`는 같은 값이어야 한다.
 
 ### 12.4 Elasticsearch와 Kibana 확인
@@ -487,15 +509,30 @@ view**다. 오른쪽에 access index가 `Data stream`으로 보여도 정상이�
 
 Discover에서 시간 범위를 `Last 24 hours`로 설정하고 다음을 확인한다.
 
-- `Edge Access Logs`: `client_ip`, `edge_server`, `request_uri`, `status`, `cache_status`
-- `OTT API Events`: `event_kind`, `client_ip`, `token_content_id`
+- `Edge Access Logs`: `@timestamp`, `event_source`, `client_ip`, `edge_server`, `request_uri`, `status`, `request_time_sec`, `cache_status`, `cdn_token_id`
+- `OTT API Events`: `event_kind`, `client_ip`, `cdn_token_id`, `token_playback_id`, `token_content_id`
+
+`token_run_id`, `token_scenario_id`, `token_label`, `token_logical_client_id`가 새 문서에
+보이면 이전 container 또는 이전 index를 보고 있는 것이다. 새 수집 구조에서는 정답과
+실험 provenance를 Edge/API 로그에 저장하지 않는다.
 
 dashboard는 지금 만들지 않는다. dashboard 유무는 원본 로그, Neo4j, Graph Pipeline,
 학습 dataset에 영향을 주지 않는다.
 
+새 코드의 telemetry 계약을 자동 검사한다.
+
+```bash
+cd ~/OTT_Testbad
+python3 03_experiments/05_validation/validate_telemetry_contract.py \
+  --elasticsearch http://192.168.0.120:9200
+```
+
+`errors`가 `[]`이고 `joined_token_ids`가 1 이상이어야 한다. 최근 30분 동안 새 재생이
+없으면 실패하는 것이 정상이며, 콘텐츠를 30초 이상 재생하고 다시 실행한다.
+
 목표 baseline:
 
-- VOD 13개 이상
+- VOD 15개 이상
 - LIVE 3개 이상
 - 모든 콘텐츠에 1080p/720p playlist
 - LIVE media sequence가 계속 증가
@@ -509,7 +546,7 @@ dashboard는 지금 만들지 않는다. dashboard 유무는 원본 로그, Neo4
 - `ott-user1~10`의 유선 `eth0`와 `.131~.140` 고정 IP가 정상이어야 한다.
 - 공유기 DHCP에서 `.151~.250`을 반드시 제외한다.
 - 17대 repository가 `01_sync_repository.yml`로 같은 commit이어야 한다.
-- VOD 13개, LIVE 3개와 Elasticsearch 검사를 통과해야 한다.
+- VOD 15개, LIVE 3개와 Elasticsearch 검사를 통과해야 한다.
 
 ```bash
 bash scripts/ansible.sh client_nodes -m ping

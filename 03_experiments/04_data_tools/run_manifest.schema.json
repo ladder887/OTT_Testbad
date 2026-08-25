@@ -68,6 +68,57 @@
     "parameters": {
       "type": "object"
     },
+    "token_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "token_jti",
+          "cdn_token_id",
+          "playback_id",
+          "content_id",
+          "owner_logical_client_id",
+          "consumer_logical_client_ids",
+          "issued_at"
+        ],
+        "properties": {
+          "token_jti": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "cdn_token_id": {
+            "type": "string",
+            "pattern": "^cdn_[a-f0-9]{24}$"
+          },
+          "playback_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner_logical_client_id": {
+            "type": "string",
+            "pattern": "^lc[0-9]{3}$"
+          },
+          "consumer_logical_client_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^lc[0-9]{3}$"
+            }
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "scheduled_at": {
       "type": [
         "string",

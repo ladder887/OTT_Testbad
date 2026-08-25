@@ -3,7 +3,11 @@ const crypto = require('crypto')
 const { authenticateToken } = require('./auth')
 const { getContentById } = require('../services/contentService')
 const { normalizeClientIp, getEdgeById, getEdgeForIp } = require('../services/edgeSelector')
-const { issuePlaybackToken, verifyPlaybackToken } = require('../services/cdnToken')
+const {
+  issuePlaybackToken,
+  verifyPlaybackToken,
+  tokenGraphIdFromJti,
+} = require('../services/cdnToken')
 const { emitApiEvent } = require('../services/telemetry')
 
 const router = express.Router()
@@ -28,27 +32,12 @@ function sanitizeCollectionTag(value, { maxLength = 48, toUpper = false, toLower
   return normalized
 }
 
-function sanitizeLabel(value) {
-  if (value === undefined || value === null) {
-    return ''
-  }
-
-  return String(value)
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '')
-    .slice(0, 48)
-}
-
-function readMetadataValue(req, name, aliases = [], options = {}) {
+function readBodyValue(req, name, aliases = [], options = {}) {
   const candidates = [name, ...aliases]
   for (const key of candidates) {
     const bodyValue = req.body?.[key]
     if (bodyValue !== undefined && bodyValue !== null && String(bodyValue).trim() !== '') {
       return sanitizeCollectionTag(bodyValue, options)
-    }
-    const queryValue = req.query?.[key]
-    if (queryValue !== undefined && queryValue !== null && String(queryValue).trim() !== '') {
-      return sanitizeCollectionTag(queryValue, options)
     }
   }
 
@@ -111,14 +100,7 @@ router.post('/start', authenticateToken, async (req, res) => {
   // Edge gateways overwrite X-Edge-ID before proxying to this API. IP-based
   // selection remains a fallback for local and legacy direct API calls.
   const edge = getEdgeById(req.get('x-edge-id')) || getEdgeForIp(clientIp)
-  const label = sanitizeLabel(req.body?.label || req.query?.label || req.body?.scenario_label || req.query?.scenario_label || req.body?.dataset_label || req.query?.dataset_label)
-  const runId = sanitizeCollectionTag(req.body?.run_id || req.query?.run_id, { maxLength: 48 })
-  const scenarioId = sanitizeCollectionTag(req.body?.scenario_id || req.query?.scenario_id, { maxLength: 24, toUpper: true })
-  const datasetLabel = sanitizeCollectionTag(req.body?.dataset_label || req.query?.dataset_label, { maxLength: 24, toLower: true })
-  const deviceId = readMetadataValue(req, 'device_id', ['deviceId'], { maxLength: 64 })
-  const logicalClientId = readMetadataValue(req, 'logical_client_id', ['logicalClientId', 'client_id'], { maxLength: 64 })
-  const physicalHostId = readMetadataValue(req, 'physical_host_id', ['physicalHostId'], { maxLength: 64 })
-  const networkProfileId = readMetadataValue(req, 'network_profile_id', ['networkProfileId'], { maxLength: 32, toUpper: true })
+  const ownerDeviceId = readBodyValue(req, 'device_id', ['deviceId'], { maxLength: 64 })
 
   try {
     const user = await getUserProfile(pgPool, req.user.userId)
@@ -131,37 +113,25 @@ router.post('/start', authenticateToken, async (req, res) => {
       req.user.userId,
       req.cookies?.sessionToken || req.body?.session_token || req.query?.session_token || req.query?.session_id || req.query?.sid
     )
+    const playbackId = crypto.randomUUID()
 
     const issued = issuePlaybackToken({
       userId: user.id,
       sessionId: sessionToken,
+      playbackId,
       contentId: content.id,
       hlsPath: content.hlsPath,
       edgeId: edge.id,
       clientIp,
       ipBind: false,
-      label,
-      runId,
-      scenarioId,
-      datasetLabel,
-      deviceId,
-      logicalClientId,
-      physicalHostId,
-      networkProfileId,
+      ownerDeviceId,
     })
+    const cdnTokenId = tokenGraphIdFromJti(issued.payload.jti)
 
     const manifestBase = `${edge.url}/hls/${content.hlsPath}/master.m3u8`
     const manifestUrlObject = new URL(manifestBase)
     manifestUrlObject.searchParams.set('token', issued.token)
     manifestUrlObject.searchParams.set('sig', issued.sig)
-    if (runId) manifestUrlObject.searchParams.set('run_id', runId)
-    if (scenarioId) manifestUrlObject.searchParams.set('scenario_id', scenarioId)
-    if (label) manifestUrlObject.searchParams.set('label', label)
-    if (datasetLabel) manifestUrlObject.searchParams.set('dataset_label', datasetLabel)
-    if (deviceId) manifestUrlObject.searchParams.set('device_id', deviceId)
-    if (logicalClientId) manifestUrlObject.searchParams.set('logical_client_id', logicalClientId)
-    if (physicalHostId) manifestUrlObject.searchParams.set('physical_host_id', physicalHostId)
-    if (networkProfileId) manifestUrlObject.searchParams.set('network_profile_id', networkProfileId)
     const manifestUrl = manifestUrlObject.toString()
 
     await pgPool.query(
@@ -176,15 +146,10 @@ router.post('/start', authenticateToken, async (req, res) => {
           hls_path: content.hlsPath,
           edge_id: edge.id,
           edge_region: edge.region,
-          session_token: sessionToken,
-          label: label || null,
-          run_id: runId || null,
-          scenario_id: scenarioId || null,
-          dataset_label: datasetLabel || null,
-          device_id: deviceId || null,
-          logical_client_id: logicalClientId || null,
-          physical_host_id: physicalHostId || null,
-          network_profile_id: networkProfileId || null,
+          playback_id: playbackId,
+          token_jti: issued.payload.jti,
+          cdn_token_id: cdnTokenId,
+          owner_device_id: ownerDeviceId || null,
         }),
       ]
     )
@@ -199,29 +164,32 @@ router.post('/start', authenticateToken, async (req, res) => {
       edgeId: edge.id,
       token: issued.token,
       tokenPayload: issued.payload,
+      playbackId,
+      ownerDeviceId,
     })
 
     res.json({
       session_id: sessionToken,
+      playback_id: playbackId,
       edge: edge.id,
       edge_region: edge.region,
       manifest_url: manifestUrl,
       token_expires: new Date(issued.payload.exp * 1000).toISOString(),
+      token_binding: {
+        token_jti: issued.payload.jti,
+        cdn_token_id: cdnTokenId,
+        playback_id: playbackId,
+        content_id: String(content.id),
+        issued_at: new Date(issued.payload.iat * 1000).toISOString(),
+        owner_device_id: ownerDeviceId || null,
+      },
       stream_params: {
         token: issued.token,
         sig: issued.sig,
+        token_jti: issued.payload.jti,
+        cdn_token_id: cdnTokenId,
         content_id: content.id,
-        session_id: sessionToken,
-        user_id: String(user.id),
-        username: user.username,
-        label: issued.payload.lbl || '',
-        run_id: issued.payload.rid || '',
-        scenario_id: issued.payload.scn || '',
-        dataset_label: issued.payload.dsl || issued.payload.lbl || '',
-        device_id: issued.payload.dev || '',
-        logical_client_id: issued.payload.lc || '',
-        physical_host_id: issued.payload.ph || '',
-        network_profile_id: issued.payload.np || '',
+        playback_id: playbackId,
       },
     })
   } catch (error) {
@@ -259,22 +227,18 @@ router.post('/verify', async (req, res) => {
   const now = Math.floor(Date.now() / 1000)
   return res.json({
     valid: true,
-    token_user_id: payload.uid,
-    token_session_id: payload.sid,
+    token_jti: payload.jti,
+    cdn_token_id: tokenGraphIdFromJti(payload.jti),
+    token_owner_account_id: payload.uid,
+    token_owner_auth_session_id: payload.sid,
+    token_playback_id: payload.pid,
+    token_owner_device_id: payload.odv || '-',
     token_content_id: payload.cid,
     token_issued_at: issuedAt > 0 ? new Date(issuedAt * 1000).toISOString() : '-',
     token_expires: new Date(Number(payload.exp) * 1000).toISOString(),
     token_ttl_sec: issuedAt > 0 && expiresAt > issuedAt ? expiresAt - issuedAt : 0,
     token_ttl_remaining_sec: expiresAt > now ? expiresAt - now : 0,
     token_edge_match: payload.edge === edgeId,
-    token_label: payload.lbl || '-',
-    token_run_id: payload.rid || '-',
-    token_scenario_id: payload.scn || '-',
-    token_dataset_label: payload.dsl || payload.lbl || '-',
-    token_device_id: payload.dev || '-',
-    token_logical_client_id: payload.lc || '-',
-    token_physical_host_id: payload.ph || '-',
-    token_network_profile_id: payload.np || '-',
   })
 })
 

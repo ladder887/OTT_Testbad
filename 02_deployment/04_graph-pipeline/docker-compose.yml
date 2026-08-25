@@ -16,6 +16,8 @@ services:
       NEO4J_DATABASE: neo4j
       LOG_LEVEL: INFO
       ENABLE_OPERATIONAL_AUDIT: "false"
+      VIEWING_SESSION_IDLE_TIMEOUT_SEC: 120
+      LIVE_VIEWING_SESSION_IDLE_TIMEOUT_SEC: 45
       GRAPH_PIPELINE_STATE_FILE: /var/lib/graph-pipeline/checkpoint.json
     volumes:
       - graph_pipeline_state:/var/lib/graph-pipeline

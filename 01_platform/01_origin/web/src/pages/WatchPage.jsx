@@ -17,20 +17,6 @@ function WatchPage() {
   const [availableLevels, setAvailableLevels] = useState([])
   const [selectedLevel, setSelectedLevel] = useState(-1)
 
-  const collectionParams = (() => {
-    const query = new URLSearchParams(location.search || '')
-    const label = query.get('label') || query.get('dataset_label') || 'normal'
-    const runId = query.get('run_id') || ''
-    const scenarioId = query.get('scenario_id') || ''
-
-    return {
-      label,
-      run_id: runId,
-      scenario_id: scenarioId,
-      dataset_label: label,
-    }
-  })()
-
   useEffect(() => {
     if (!content) {
       setError('콘텐츠 정보를 찾을 수 없습니다.')
@@ -56,10 +42,7 @@ function WatchPage() {
         hlsRef.current = null
       }
 
-      const userId = localStorage.getItem('userId') || ''
-      const username = localStorage.getItem('username') || 'guest'
-
-      const { data: playbackData } = await playbackAPI.start(content.id, collectionParams)
+      const { data: playbackData } = await playbackAPI.start(content.id)
       const videoUrl = playbackData?.manifest_url
       if (!videoUrl) {
         setError('재생 URL을 가져오지 못했습니다.')
@@ -70,22 +53,12 @@ function WatchPage() {
       const manifestUrl = new URL(videoUrl)
       const token = streamParams.token || manifestUrl.searchParams.get('token') || ''
       const sig = streamParams.sig || manifestUrl.searchParams.get('sig') || ''
-      const streamLabel = streamParams.label || collectionParams.label || 'normal'
-      const streamContentId = streamParams.content_id || content.id
-      const streamSessionId = streamParams.session_id || playbackData?.session_id || ''
-      const streamUserId = streamParams.user_id || userId
-      const streamUsername = streamParams.username || username
-      const streamRunId = streamParams.run_id || collectionParams.run_id || ''
-      const streamScenarioId = streamParams.scenario_id || collectionParams.scenario_id || ''
-      const streamDatasetLabel = streamParams.dataset_label || collectionParams.dataset_label || streamLabel
 
       console.log('Start Video Playback:', {
         contentId: content.id,
-        userId: streamUserId,
-        username: streamUsername,
         token: token ? `${token.substring(0, 20)}...` : 'n/a',
         signature: sig ? `${sig.substring(0, 20)}...` : 'n/a',
-        sessionId: streamSessionId,
+        playbackId: playbackData?.playback_id || 'n/a',
         url: videoUrl
       })
 
@@ -103,30 +76,6 @@ function WatchPage() {
               }
               if (sig && !resolvedUrl.searchParams.get('sig')) {
                 resolvedUrl.searchParams.set('sig', sig)
-              }
-              if (streamContentId && !resolvedUrl.searchParams.get('content_id')) {
-                resolvedUrl.searchParams.set('content_id', streamContentId)
-              }
-              if (streamUserId && !resolvedUrl.searchParams.get('user_id')) {
-                resolvedUrl.searchParams.set('user_id', streamUserId)
-              }
-              if (streamUsername && !resolvedUrl.searchParams.get('user')) {
-                resolvedUrl.searchParams.set('user', streamUsername)
-              }
-              if (streamSessionId && !resolvedUrl.searchParams.get('sid')) {
-                resolvedUrl.searchParams.set('sid', streamSessionId)
-              }
-              if (streamLabel && !resolvedUrl.searchParams.get('label')) {
-                resolvedUrl.searchParams.set('label', streamLabel)
-              }
-              if (streamRunId && !resolvedUrl.searchParams.get('run_id')) {
-                resolvedUrl.searchParams.set('run_id', streamRunId)
-              }
-              if (streamScenarioId && !resolvedUrl.searchParams.get('scenario_id')) {
-                resolvedUrl.searchParams.set('scenario_id', streamScenarioId)
-              }
-              if (streamDatasetLabel && !resolvedUrl.searchParams.get('dataset_label')) {
-                resolvedUrl.searchParams.set('dataset_label', streamDatasetLabel)
               }
 
               context.url = resolvedUrl.toString()

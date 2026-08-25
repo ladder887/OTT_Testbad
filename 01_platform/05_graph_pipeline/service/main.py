@@ -39,7 +39,7 @@ import time
 import json
 import logging
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from urllib.parse import urlparse, parse_qsl, unquote
 from elasticsearch import Elasticsearch
@@ -83,6 +83,14 @@ class GraphPipeline:
         self.enable_operational_audit = os.getenv(
             "ENABLE_OPERATIONAL_AUDIT", "false"
         ).strip().lower() in {"1", "true", "yes", "on"}
+        self.viewing_session_idle_timeout_sec = max(
+            1,
+            int(os.getenv("VIEWING_SESSION_IDLE_TIMEOUT_SEC", "120")),
+        )
+        self.live_viewing_session_idle_timeout_sec = max(
+            1,
+            int(os.getenv("LIVE_VIEWING_SESSION_IDLE_TIMEOUT_SEC", "45")),
+        )
 
         if self.log_source in ("elasticsearch", "es"):
             self.es_client = Elasticsearch(self.elasticsearch_url, verify_certs=False)
@@ -163,10 +171,8 @@ class GraphPipeline:
             indexes = [
                 "CREATE INDEX account_id IF NOT EXISTS FOR (a:Account) ON (a.account_id)",
                 "CREATE INDEX viewing_session_id IF NOT EXISTS FOR (vs:ViewingSession) ON (vs.viewing_session_id)",
-                "CREATE INDEX viewing_session_run_id IF NOT EXISTS FOR (vs:ViewingSession) ON (vs.run_id)",
-                "CREATE INDEX viewing_session_label IF NOT EXISTS FOR (vs:ViewingSession) ON (vs.label)",
+                "CREATE INDEX viewing_session_key IF NOT EXISTS FOR (vs:ViewingSession) ON (vs.session_key)",
                 "CREATE INDEX cdn_token_id IF NOT EXISTS FOR (t:CdnToken) ON (t.cdn_token_id)",
-                "CREATE INDEX cdn_token_run_id IF NOT EXISTS FOR (t:CdnToken) ON (t.run_id)",
                 "CREATE INDEX client_ip_address IF NOT EXISTS FOR (ip:ClientIP) ON (ip.ip_address)",
                 "CREATE INDEX device_id IF NOT EXISTS FOR (d:Device) ON (d.device_id)",
                 "CREATE INDEX edge_id IF NOT EXISTS FOR (e:Edge) ON (e.edge_id)",
@@ -176,7 +182,6 @@ class GraphPipeline:
                 "CREATE INDEX request_id IF NOT EXISTS FOR (r:Request) ON (r.request_id)",
                 "CREATE INDEX request_kind IF NOT EXISTS FOR (r:Request) ON (r.kind)",
                 "CREATE INDEX request_target_content IF NOT EXISTS FOR (r:Request) ON (r.target_content_id)",
-                "CREATE INDEX request_run_id IF NOT EXISTS FOR (r:Request) ON (r.run_id)",
                 "CREATE INDEX referrer_domain IF NOT EXISTS FOR (r:Referrer) ON (r.domain)",
             ]
             for idx in indexes:
@@ -350,23 +355,107 @@ class GraphPipeline:
         safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in text)
         return safe[:160] or fallback
 
-    @staticmethod
-    def _hash_cdn_token(token):
-        if not token or token == "-":
-            return ""
-        return "cdn_" + hashlib.sha256(str(token).encode("utf-8")).hexdigest()[:24]
+    @classmethod
+    def _build_viewing_session_key(
+        cls,
+        account_id,
+        playback_session_id,
+        cdn_token_id,
+        client_ip,
+        observed_device_id,
+        content_id,
+        request_id,
+    ):
+        consumer_parts = [
+            value
+            for value in (client_ip, observed_device_id)
+            if value and value != "-"
+        ]
+        consumer_id = "|".join(consumer_parts) or "consumer_unknown"
+        owner_scope = account_id if account_id and account_id != "-" else None
+        if not owner_scope:
+            owner_scope = (
+                playback_session_id
+                if playback_session_id and playback_session_id != "-"
+                else cdn_token_id
+            )
+        seed_parts = [
+            value
+            for value in (owner_scope, consumer_id, content_id)
+            if value and value != "-"
+        ]
+        if not seed_parts:
+            seed_parts = [request_id]
+        seed = "|".join(seed_parts)
+        return "vsk_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
 
     @classmethod
-    def _build_viewing_session_id(cls, run_id, app_session_id, cdn_token_id, account_id, content_id, request_id):
-        if run_id and run_id != "-":
-            return "vs_" + cls._safe_graph_id(run_id)
-        if cdn_token_id:
-            return "vs_" + cls._safe_graph_id(cdn_token_id)
-        seed_parts = [item for item in (app_session_id, account_id, content_id) if item and item != "-"]
-        if seed_parts:
-            seed = "|".join(seed_parts)
-            return "vs_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
-        return "vs_" + cls._safe_graph_id(request_id)
+    def _new_viewing_session_id(cls, session_key, timestamp, request_id):
+        seed = f"{session_key}|{timestamp}|{request_id}"
+        return "vs_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _parse_event_datetime(value):
+        if not value or value == "-":
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _epoch_to_iso_timestamp(cls, value):
+        try:
+            if value in (None, "", "-"):
+                return None
+            parsed = datetime.fromtimestamp(float(value), tz=timezone.utc)
+            return parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        except (TypeError, ValueError, OSError):
+            return None
+
+    def _resolve_viewing_session_id(
+        self,
+        session,
+        session_key,
+        timestamp,
+        request_id,
+        idle_timeout_sec=None,
+        start_new_playback=False,
+    ):
+        event_time = self._parse_event_datetime(timestamp)
+        if event_time is None:
+            return self._new_viewing_session_id(session_key, timestamp, request_id)
+
+        if idle_timeout_sec is None:
+            idle_timeout_sec = getattr(self, "viewing_session_idle_timeout_sec", 120)
+        idle_timeout_sec = max(1, int(idle_timeout_sec))
+        threshold = event_time - timedelta(seconds=idle_timeout_sec)
+        result = session.run(
+            """
+            MATCH (vs:ViewingSession {session_key: $session_key})
+            WHERE vs.last_time >= datetime($threshold)
+              AND vs.start_time <= datetime($timestamp)
+            RETURN
+                vs.viewing_session_id AS viewing_session_id,
+                coalesce(vs.has_playback_start, false) AS has_playback_start
+            ORDER BY vs.last_time DESC
+            LIMIT 1
+            """,
+            session_key=session_key,
+            threshold=threshold.isoformat().replace("+00:00", "Z"),
+            timestamp=event_time.isoformat().replace("+00:00", "Z"),
+        )
+        record = result.single()
+        if (
+            record
+            and record["viewing_session_id"]
+            and not (start_new_playback and record["has_playback_start"])
+        ):
+            return record["viewing_session_id"]
+        return self._new_viewing_session_id(session_key, timestamp, request_id)
 
     @staticmethod
     def _infer_content_type(content_id, request_path=""):
@@ -503,44 +592,29 @@ class GraphPipeline:
             if real_ip == "172.18.0.1":
                 real_ip = "device_unknown"
 
-            session_token = params.get("token", log.get("session_token", "-"))
             playback_session_id = (
-                params.get("sid")
+                log.get("token_playback_id")
+                or params.get("playback_id")
+                or params.get("pid")
                 or log.get("token_session_id")
-                or params.get("session_id")
                 or log.get("session_id", "-")
             )
-            # user_id를 account_id로 사용 (고유 식별자)
-            user_id = params.get("user_id", log.get("token_user_id", log.get("user_id", "-")))
-            username = params.get("user", log.get("username", "-"))
-            run_id = params.get("run_id", log.get("token_run_id", "-"))
-            scenario_id = params.get("scenario_id", log.get("token_scenario_id", "-"))
-            dataset_label = params.get("dataset_label", log.get("token_dataset_label", "-"))
-            label = params.get("label", log.get("token_label", dataset_label))
-            device_id = (
-                params.get("device_id")
-                or params.get("device")
+            owner_auth_session_id = (
+                log.get("token_owner_auth_session_id")
+                or params.get("sid")
+                or log.get("token_session_id")
+                or "-"
+            )
+            user_id = (
+                log.get("token_owner_account_id")
+                or log.get("token_user_id")
+                or log.get("user_id")
+                or "-"
+            )
+            username = log.get("username", "-")
+            owner_device_id = (
+                log.get("token_owner_device_id")
                 or log.get("token_device_id")
-                or log.get("device_id")
-                or "-"
-            )
-            logical_client_id = (
-                params.get("logical_client_id")
-                or params.get("client_id")
-                or log.get("token_logical_client_id")
-                or log.get("logical_client_id")
-                or "-"
-            )
-            physical_host_id = (
-                params.get("physical_host_id")
-                or log.get("token_physical_host_id")
-                or log.get("physical_host_id")
-                or "-"
-            )
-            network_profile_id = (
-                params.get("network_profile_id")
-                or log.get("token_network_profile_id")
-                or log.get("network_profile_id")
                 or "-"
             )
             
@@ -587,18 +661,29 @@ class GraphPipeline:
             if raw_size is None:
                 raw_size = log.get("http.response.body.bytes")
 
-            raw_response_time = log.get("response_time_ms")
-            if raw_response_time is None:
-                raw_response_time = log.get("upstream_response_time")
+            if log.get("request_time_sec") not in (None, "-"):
+                response_time_ms = _to_float(log.get("request_time_sec"), 0.0) * 1000.0
+            else:
+                raw_response_time = log.get("response_time_ms")
+                if raw_response_time is None:
+                    raw_response_time = log.get("upstream_response_time")
+                response_time_ms = _to_float(raw_response_time, 0.0)
 
             request_method = log.get("request_method") or log.get("http.request.method") or "GET"
 
-            timestamp_value = log.get("@timestamp") or log.get("timestamp") or log.get("event.created")
+            timestamp_value = self._epoch_to_iso_timestamp(log.get("event_time_epoch"))
+            if not timestamp_value:
+                timestamp_value = log.get("@timestamp") or log.get("timestamp") or log.get("event.created")
             if not self._normalize_iso_timestamp(timestamp_value):
                 timestamp_value = "1970-01-01T00:00:00Z"
 
+            cdn_token_id = str(log.get("cdn_token_id") or "").strip()
+            if cdn_token_id == "-":
+                cdn_token_id = ""
+
             return {
                 "timestamp": timestamp_value,
+                "event_source": log.get("event_source", "edge-nginx"),
                 "account_id": account_id,
                 "user_id": user_id,
                 "username": username,
@@ -606,17 +691,11 @@ class GraphPipeline:
                 "client_region": log.get("client_region", "UNKNOWN"),
                 "edge_server": log.get("edge_server", "-"),
                 "domain": domain,
-                "session_token": session_token,
-                "cdn_token_id": log.get("cdn_token_id", ""),
+                "cdn_token_id": cdn_token_id,
+                "token_jti": log.get("token_jti", "-"),
                 "playback_session_id": playback_session_id if playback_session_id else "-",
-                "run_id": run_id,
-                "scenario_id": scenario_id,
-                "label": label,
-                "dataset_label": dataset_label,
-                "device_id": device_id,
-                "logical_client_id": logical_client_id,
-                "physical_host_id": physical_host_id,
-                "network_profile_id": network_profile_id,
+                "owner_auth_session_id": owner_auth_session_id,
+                "owner_device_id": owner_device_id,
                 "token_content_id": log.get("token_content_id", "-"),
                 "token_issued_at": log.get("token_issued_at", "-"),
                 "token_expires": log.get("token_expires", "-"),
@@ -632,7 +711,7 @@ class GraphPipeline:
                 "method": request_method,
                 "status": _to_int(raw_status, 0),
                 "size": _to_int(raw_size, 0),
-                "response_time_ms": _to_float(raw_response_time, 0.0),
+                "response_time_ms": response_time_ms,
                 "cache_status": log.get("cache_status", "-"),
                 "request_log_id": log.get("request_id", "-"),
                 "user_agent": log.get("http_user_agent", "-"),
@@ -874,21 +953,28 @@ class GraphPipeline:
         with self.driver.session(database=self.neo4j_database) as session:
             stats = defaultdict(int)
 
-            for log in logs:
-                if log["status"] < 200 or log["status"] >= 400:
-                    continue
-
+            ordered_logs = sorted(logs, key=lambda item: item.get("timestamp", ""))
+            for log in ordered_logs:
                 timestamp = log["timestamp"]
                 account_id = log.get("account_id", "-")
                 username = log.get("username", "-")
                 user_id = log.get("user_id", "-")
                 client_ip = log.get("client_ip", "-")
-                token = log.get("session_token", "-")
                 app_session_id = log.get("playback_session_id", "-")
+                owner_auth_session_id = log.get("owner_auth_session_id", "-")
+                owner_device_id = log.get("owner_device_id", "-")
                 content_path = log.get("content_path", "-")
                 request_path = self._strip_query(content_path)
                 request_kind = self._classify_request_kind(content_path, log.get("method"))
                 if not request_kind:
+                    continue
+                if (
+                    request_kind in {"browse_content", "playback_start"}
+                    and log.get("event_source") != "ott-api"
+                ):
+                    # The Edge proxy log and the API telemetry describe the same
+                    # API call. Only the API event carries the owner/content/token
+                    # identity needed by the graph.
                     continue
 
                 query_params = log.get("query_params") if isinstance(log.get("query_params"), dict) else {}
@@ -904,17 +990,6 @@ class GraphPipeline:
                     if token_content_id and token_content_id != "-":
                         request_content_id = token_content_id
 
-                run_id = log.get("run_id", "-") or "-"
-                scenario_id = log.get("scenario_id", "-") or "-"
-                dataset_label = log.get("dataset_label", "-") or "-"
-                label = log.get("label", dataset_label) or dataset_label or "normal"
-                if label == "-" and dataset_label != "-":
-                    label = dataset_label
-                if label == "-":
-                    label = "normal"
-                logical_client_id = log.get("logical_client_id", "-") or "-"
-                physical_host_id = log.get("physical_host_id", "-") or "-"
-                network_profile_id = log.get("network_profile_id", "-") or "-"
                 token_issued_at = log.get("token_issued_at", "-") or "-"
                 token_expires = log.get("token_expires", "-") or "-"
                 token_ttl_sec = log.get("token_ttl_sec", 0.0) or 0.0
@@ -926,25 +1001,36 @@ class GraphPipeline:
                     edge_region = self._infer_region_from_edge(edge_id)
 
                 request_log_id = log.get("request_log_id", "-")
-                request_seed = request_log_id if request_log_id and request_log_id != "-" else f"{timestamp}|{log.get('connection_id', '-')}|{client_ip}|{content_path}"
+                request_seed = request_log_id if request_log_id and request_log_id != "-" else f"{edge_id}|{timestamp}|{log.get('connection_id', '-')}|{client_ip}|{content_path}"
                 request_id = "req_" + hashlib.sha256(request_seed.encode("utf-8")).hexdigest()[:24]
-                cdn_token_id = log.get("cdn_token_id", "") or self._hash_cdn_token(token)
-                viewing_session_id = self._build_viewing_session_id(
-                    run_id,
+                cdn_token_id = log.get("cdn_token_id", "")
+                observed_device_id = self._device_id_from_user_agent(log.get("user_agent", "-"))
+                content_type = self._infer_content_type(request_content_id, request_path)
+                viewing_session_key = self._build_viewing_session_key(
+                    account_id,
                     app_session_id,
                     cdn_token_id,
-                    account_id,
+                    client_ip,
+                    observed_device_id,
                     request_content_id,
                     request_id,
                 )
-                content_type = self._infer_content_type(request_content_id, request_path)
+                viewing_session_id = self._resolve_viewing_session_id(
+                    session,
+                    viewing_session_key,
+                    timestamp,
+                    request_id,
+                    idle_timeout_sec=(
+                        getattr(self, "live_viewing_session_idle_timeout_sec", 45)
+                        if content_type == "live"
+                        else getattr(self, "viewing_session_idle_timeout_sec", 120)
+                    ),
+                    start_new_playback=request_kind == "playback_start",
+                )
                 is_browse = request_kind == "browse_content"
                 is_playback_start = request_kind == "playback_start"
                 is_manifest = request_kind == "hls_manifest"
                 is_segment = request_kind == "hls_segment"
-                device_id = log.get("device_id", "-") or "-"
-                if not device_id or device_id == "-":
-                    device_id = self._device_id_from_user_agent(log.get("user_agent", "-"))
                 device_type = self._classify_device(log.get("user_agent", "-"))
                 referrer_domain, referrer_category, referrer_legitimate = self._normalize_referrer(referer)
 
@@ -971,18 +1057,11 @@ class GraphPipeline:
                         r.range_header = $range_header,
                         r.keep_alive = $keep_alive,
                         r.user_agent = $user_agent,
-                        r.run_id = $run_id,
-                        r.scenario_id = $scenario_id,
-                        r.dataset_label = $dataset_label,
-                        r.label = $label,
+                        r.observed_device_id = $observed_device_id,
                         r.token_issued_at = CASE WHEN $token_issued_at = '-' THEN r.token_issued_at ELSE $token_issued_at END,
                         r.token_expires = CASE WHEN $token_expires = '-' THEN r.token_expires ELSE $token_expires END,
                         r.token_ttl_sec = $token_ttl_sec,
-                        r.token_ttl_remaining_sec = $token_ttl_remaining_sec,
-                        r.device_id = CASE WHEN $device_id = '-' THEN r.device_id ELSE $device_id END,
-                        r.logical_client_id = CASE WHEN $logical_client_id = '-' THEN r.logical_client_id ELSE $logical_client_id END,
-                        r.physical_host_id = CASE WHEN $physical_host_id = '-' THEN r.physical_host_id ELSE $physical_host_id END,
-                        r.network_profile_id = CASE WHEN $network_profile_id = '-' THEN r.network_profile_id ELSE $network_profile_id END
+                        r.token_ttl_remaining_sec = $token_ttl_remaining_sec
                     """,
                     request_id=request_id,
                     timestamp=timestamp,
@@ -1003,18 +1082,11 @@ class GraphPipeline:
                     range_header=log.get("http_range", "-"),
                     keep_alive=log.get("keep_alive", False),
                     user_agent=log.get("user_agent", "-"),
-                    run_id=run_id,
-                    scenario_id=scenario_id,
-                    dataset_label=dataset_label,
-                    label=label,
+                    observed_device_id=observed_device_id,
                     token_issued_at=token_issued_at,
                     token_expires=token_expires,
                     token_ttl_sec=token_ttl_sec,
                     token_ttl_remaining_sec=token_ttl_remaining_sec,
-                    device_id=device_id,
-                    logical_client_id=logical_client_id,
-                    physical_host_id=physical_host_id,
-                    network_profile_id=network_profile_id,
                 )
                 stats["Request"] += 1
 
@@ -1049,6 +1121,7 @@ class GraphPipeline:
                     MERGE (vs:ViewingSession {viewing_session_id: $viewing_session_id})
                     ON CREATE SET
                         vs.start_time = datetime($timestamp),
+                        vs.session_key = $session_key,
                         vs.request_count = 0,
                         vs.total_manifest_requests = 0,
                         vs.total_segment_requests = 0,
@@ -1059,24 +1132,23 @@ class GraphPipeline:
                         vs.has_playback_start = false,
                         vs.playback_without_browse = false
                     SET
-                        vs.last_time = datetime($timestamp),
-                        vs.end_time = datetime($timestamp),
+                        vs.last_time = CASE
+                            WHEN vs.last_time IS NULL OR datetime($timestamp) > vs.last_time THEN datetime($timestamp)
+                            ELSE vs.last_time
+                        END,
+                        vs.end_time = CASE
+                            WHEN vs.end_time IS NULL OR datetime($timestamp) > vs.end_time THEN datetime($timestamp)
+                            ELSE vs.end_time
+                        END,
                         vs.app_session_id = CASE WHEN $app_session_id = '-' THEN vs.app_session_id ELSE $app_session_id END,
                         vs.account_id = CASE WHEN $account_id = '-' THEN vs.account_id ELSE $account_id END,
                         vs.content_id = CASE WHEN $content_id = '' THEN vs.content_id ELSE $content_id END,
                         vs.content_type = CASE WHEN $content_id = '' THEN vs.content_type ELSE $content_type END,
                         vs.is_live = CASE WHEN $content_type = 'live' THEN true ELSE coalesce(vs.is_live, false) END,
-                        vs.run_id = $run_id,
-                        vs.scenario_id = $scenario_id,
-                        vs.dataset_label = $dataset_label,
-                        vs.label = $label,
                         vs.token_issued_at = CASE WHEN $token_issued_at = '-' THEN vs.token_issued_at ELSE $token_issued_at END,
                         vs.token_expires = CASE WHEN $token_expires = '-' THEN vs.token_expires ELSE $token_expires END,
                         vs.token_ttl_sec = CASE WHEN $token_ttl_sec = 0 THEN coalesce(vs.token_ttl_sec, 0) ELSE $token_ttl_sec END,
-                        vs.device_id = CASE WHEN $device_id = '-' THEN vs.device_id ELSE $device_id END,
-                        vs.logical_client_id = CASE WHEN $logical_client_id = '-' THEN vs.logical_client_id ELSE $logical_client_id END,
-                        vs.physical_host_id = CASE WHEN $physical_host_id = '-' THEN vs.physical_host_id ELSE $physical_host_id END,
-                        vs.network_profile_id = CASE WHEN $network_profile_id = '-' THEN vs.network_profile_id ELSE $network_profile_id END,
+                        vs.observed_device_id = $observed_device_id,
                         vs.request_count = coalesce(vs.request_count, 0) + 1,
                         vs.total_manifest_requests = coalesce(vs.total_manifest_requests, 0) + $manifest_inc,
                         vs.total_segment_requests = coalesce(vs.total_segment_requests, 0) + $segment_inc,
@@ -1091,22 +1163,16 @@ class GraphPipeline:
                         END
                     """,
                     viewing_session_id=viewing_session_id,
+                    session_key=viewing_session_key,
                     timestamp=timestamp,
                     app_session_id=app_session_id,
                     account_id=account_id,
                     content_id=request_content_id,
                     content_type=content_type,
-                    run_id=run_id,
-                    scenario_id=scenario_id,
-                    dataset_label=dataset_label,
-                    label=label,
                     token_issued_at=token_issued_at,
                     token_expires=token_expires,
                     token_ttl_sec=token_ttl_sec,
-                    device_id=device_id,
-                    logical_client_id=logical_client_id,
-                    physical_host_id=physical_host_id,
-                    network_profile_id=network_profile_id,
+                    observed_device_id=observed_device_id,
                     manifest_inc=1 if is_manifest else 0,
                     segment_inc=1 if is_segment else 0,
                     playback_inc=1 if is_playback_start else 0,
@@ -1159,19 +1225,14 @@ class GraphPipeline:
                         MERGE (tok:CdnToken {cdn_token_id: $cdn_token_id})
                         ON CREATE SET
                             tok.first_seen = datetime($timestamp),
-                            tok.token_prefix = $token_prefix
+                            tok.token_jti = CASE WHEN $token_jti = '-' THEN null ELSE $token_jti END
                         SET
                             tok.last_seen = datetime($timestamp),
                             tok.app_session_id = CASE WHEN $app_session_id = '-' THEN tok.app_session_id ELSE $app_session_id END,
+                            tok.owner_auth_session_id = CASE WHEN $owner_auth_session_id = '-' THEN tok.owner_auth_session_id ELSE $owner_auth_session_id END,
+                            tok.owner_account_id = CASE WHEN $account_id = '-' THEN tok.owner_account_id ELSE $account_id END,
+                            tok.owner_device_id = CASE WHEN $owner_device_id = '-' THEN tok.owner_device_id ELSE $owner_device_id END,
                             tok.content_id = CASE WHEN $content_id = '' THEN tok.content_id ELSE $content_id END,
-                            tok.run_id = $run_id,
-                            tok.scenario_id = $scenario_id,
-                            tok.dataset_label = $dataset_label,
-                            tok.label = $label,
-                            tok.device_id = CASE WHEN $device_id = '-' THEN tok.device_id ELSE $device_id END,
-                            tok.logical_client_id = CASE WHEN $logical_client_id = '-' THEN tok.logical_client_id ELSE $logical_client_id END,
-                            tok.physical_host_id = CASE WHEN $physical_host_id = '-' THEN tok.physical_host_id ELSE $physical_host_id END,
-                            tok.network_profile_id = CASE WHEN $network_profile_id = '-' THEN tok.network_profile_id ELSE $network_profile_id END,
                             tok.token_issued_at = CASE WHEN $token_issued_at = '-' THEN tok.token_issued_at ELSE $token_issued_at END,
                             tok.token_expires = CASE WHEN $token_expires = '-' THEN tok.token_expires ELSE $token_expires END,
                             tok.token_ttl_sec = CASE WHEN $token_ttl_sec = 0 THEN coalesce(tok.token_ttl_sec, 0) ELSE $token_ttl_sec END,
@@ -1181,18 +1242,13 @@ class GraphPipeline:
                         MERGE (vs)-[:USES_CDN_TOKEN]->(tok)
                         """,
                         cdn_token_id=cdn_token_id,
-                        token_prefix=str(token)[:12],
+                        token_jti=log.get("token_jti", "-") or "-",
                         timestamp=timestamp,
                         app_session_id=app_session_id,
+                        owner_auth_session_id=owner_auth_session_id,
+                        account_id=account_id,
+                        owner_device_id=owner_device_id,
                         content_id=request_content_id,
-                        run_id=run_id,
-                        scenario_id=scenario_id,
-                        dataset_label=dataset_label,
-                        label=label,
-                        device_id=device_id,
-                        logical_client_id=logical_client_id,
-                        physical_host_id=physical_host_id,
-                        network_profile_id=network_profile_id,
                         token_issued_at=token_issued_at,
                         token_expires=token_expires,
                         token_ttl_sec=token_ttl_sec,
@@ -1233,7 +1289,7 @@ class GraphPipeline:
 
                 session.run(
                     """
-                    MERGE (d:Device {device_id: $device_id})
+                    MERGE (d:Device {device_id: $observed_device_id})
                     ON CREATE SET
                         d.first_seen = datetime($timestamp),
                         d.user_agent = $user_agent,
@@ -1243,7 +1299,7 @@ class GraphPipeline:
                     MATCH (vs:ViewingSession {viewing_session_id: $viewing_session_id})
                     MERGE (vs)-[:ON_DEVICE]->(d)
                     """,
-                    device_id=device_id,
+                    observed_device_id=observed_device_id,
                     timestamp=timestamp,
                     user_agent=log.get("user_agent", "-"),
                     device_type=device_type,

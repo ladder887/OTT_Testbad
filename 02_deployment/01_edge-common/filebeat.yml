@@ -30,6 +30,13 @@ setup.template.name: "access-gateway-nginx"
 setup.template.pattern: "access-gateway-nginx-*"
 
 processors:
+  - timestamp:
+      field: event_time_epoch
+      layouts:
+        - UNIX
+      test:
+        - '1787065200.123'
+      ignore_missing: true
   - add_host_metadata:
       when.not.contains.tags: forwarded
   - add_cloud_metadata: ~

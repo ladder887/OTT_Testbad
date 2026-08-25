@@ -64,8 +64,12 @@ end
 
 ngx.var.client_real_ip = client_ip ~= "" and client_ip or "-"
 ngx.var.edge_server = edge_id
-ngx.var.token_user_id = "-"
-ngx.var.token_session_id = "-"
+ngx.var.token_jti = "-"
+ngx.var.cdn_token_id = "-"
+ngx.var.token_owner_account_id = "-"
+ngx.var.token_owner_auth_session_id = "-"
+ngx.var.token_playback_id = "-"
+ngx.var.token_owner_device_id = "-"
 ngx.var.token_content_id = "-"
 ngx.var.token_issued_at = "-"
 ngx.var.token_expires = "-"
@@ -73,14 +77,6 @@ ngx.var.token_ttl_sec = "0"
 ngx.var.token_ttl_remaining_sec = "0"
 ngx.var.token_valid = "false"
 ngx.var.token_edge_match = "false"
-ngx.var.token_label = "normal"
-ngx.var.token_run_id = "-"
-ngx.var.token_scenario_id = "-"
-ngx.var.token_dataset_label = "-"
-ngx.var.token_device_id = "-"
-ngx.var.token_logical_client_id = "-"
-ngx.var.token_physical_host_id = "-"
-ngx.var.token_network_profile_id = "-"
 
 if not token or token == "" or not sig or sig == "" then
     return reject(403, "missing_token_or_signature")
@@ -133,8 +129,12 @@ else
     end
 end
 
-ngx.var.token_user_id = tostring(body.token_user_id or "-")
-ngx.var.token_session_id = tostring(body.token_session_id or "-")
+ngx.var.token_jti = tostring(body.token_jti or "-")
+ngx.var.cdn_token_id = tostring(body.cdn_token_id or "-")
+ngx.var.token_owner_account_id = tostring(body.token_owner_account_id or "-")
+ngx.var.token_owner_auth_session_id = tostring(body.token_owner_auth_session_id or "-")
+ngx.var.token_playback_id = tostring(body.token_playback_id or "-")
+ngx.var.token_owner_device_id = tostring(body.token_owner_device_id or "-")
 ngx.var.token_content_id = tostring(body.token_content_id or "-")
 ngx.var.token_issued_at = tostring(body.token_issued_at or "-")
 ngx.var.token_expires = tostring(body.token_expires or "-")
@@ -142,26 +142,11 @@ ngx.var.token_ttl_sec = tostring(body.token_ttl_sec or "0")
 ngx.var.token_ttl_remaining_sec = tostring(body.token_ttl_remaining_sec or "0")
 ngx.var.token_valid = "true"
 ngx.var.token_edge_match = body.token_edge_match and "true" or "false"
-ngx.var.token_label = tostring(body.token_label or "normal")
-ngx.var.token_run_id = tostring(body.token_run_id or "-")
-ngx.var.token_scenario_id = tostring(body.token_scenario_id or "-")
-ngx.var.token_dataset_label = tostring(body.token_dataset_label or "-")
-ngx.var.token_device_id = tostring(body.token_device_id or "-")
-ngx.var.token_logical_client_id = tostring(body.token_logical_client_id or "-")
-ngx.var.token_physical_host_id = tostring(body.token_physical_host_id or "-")
-ngx.var.token_network_profile_id = tostring(body.token_network_profile_id or "-")
 
-ngx.req.set_header("X-User-ID", ngx.var.token_user_id)
-ngx.req.set_header("X-Playback-Session", ngx.var.token_session_id)
+ngx.req.set_header("X-User-ID", ngx.var.token_owner_account_id)
+ngx.req.set_header("X-Playback-Session", ngx.var.token_playback_id)
 ngx.req.set_header("X-Content-ID", ngx.var.token_content_id)
 ngx.req.set_header("X-Token-Issued-At", ngx.var.token_issued_at)
 ngx.req.set_header("X-Token-TTL-Sec", ngx.var.token_ttl_sec)
 ngx.req.set_header("X-Token-TTL-Remaining-Sec", ngx.var.token_ttl_remaining_sec)
-ngx.req.set_header("X-Scenario-Label", ngx.var.token_label)
-ngx.req.set_header("X-Run-ID", ngx.var.token_run_id)
-ngx.req.set_header("X-Scenario-ID", ngx.var.token_scenario_id)
-ngx.req.set_header("X-Dataset-Label", ngx.var.token_dataset_label)
-ngx.req.set_header("X-Device-ID", ngx.var.token_device_id)
-ngx.req.set_header("X-Logical-Client-ID", ngx.var.token_logical_client_id)
-ngx.req.set_header("X-Physical-Host-ID", ngx.var.token_physical_host_id)
-ngx.req.set_header("X-Network-Profile-ID", ngx.var.token_network_profile_id)
+ngx.req.set_header("X-CDN-Token-ID", ngx.var.cdn_token_id)

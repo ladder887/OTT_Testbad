@@ -9,7 +9,37 @@ manifest는 다음 대조의 기준이다.
 3. Neo4j에서 생성된 `ViewingSession`과 관계
 4. dataset export에 포함된 provenance
 
-`run_id`, `scenario_id`, `logical_client_id`, seed는 학습 입력이 아니다.
+`run_id`, `scenario_id`, `logical_client_id`, physical host, network profile,
+label, seed는 서비스 토큰·URL·Edge 로그·raw graph에 기록하지 않는다.
+
+`POST /api/playback/start` 응답의 `token_binding`을 manifest의
+`token_bindings`에 추가한다. 이후 dataset builder가 `cdn_token_id`로 raw
+graph와 manifest를 결합한다. 이 결합은 split 생성과 정답 부여 단계에서만
+수행하며 `run_id`, scenario, label은 모델 입력 특징으로 사용하지 않는다.
+
+A1/A7처럼 하나의 토큰을 여러 client가 소비하는 경우에는
+`owner_logical_client_id`는 발급 client 하나를 기록하고,
+`consumer_logical_client_ids`에 실제 요청을 보낼 모든 client를 기록한다.
+
+실행기가 playback 응답을 받은 직후 다음 도구로 binding을 원자적으로
+추가할 수 있다.
+
+```bash
+python 03_experiments/04_data_tools/record_token_binding.py \
+  --manifest RUN_MANIFEST.json \
+  --token-jti TOKEN_JTI \
+  --cdn-token-id CDN_TOKEN_ID \
+  --playback-id PLAYBACK_ID \
+  --content-id video_01 \
+  --owner lc001 \
+  --consumer lc001 \
+  --issued-at 2026-08-19T00:00:00Z
+```
+
+token relay는 `--consumer lc002 --consumer lc003`처럼 옵션을 반복한다.
+`cdn_token_id`가 `token_jti`에서 계산한 값과 다르거나 run에 없는 client를 지정하면
+기록을 거부한다. manifest 파일은 중앙 orchestrator 하나만 순차적으로 갱신한다.
+여러 client container가 같은 manifest를 동시에 직접 수정하지 않는다.
 
 ## HLS inventory
 
