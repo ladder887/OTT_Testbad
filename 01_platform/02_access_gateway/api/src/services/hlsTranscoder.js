@@ -8,6 +8,10 @@ const FFPROBE_BIN = process.env.FFPROBE_BIN || 'ffprobe'
 const LIVE_PID_DIR = process.env.LIVE_PID_DIR || '/tmp/ott-live-transcoder'
 const LIVE_HLS_TIME_SEC = String(Math.max(1, Number.parseInt(process.env.LIVE_HLS_TIME_SEC || '2', 10) || 2))
 const LIVE_HLS_LIST_SIZE = String(Math.max(3, Number.parseInt(process.env.LIVE_HLS_LIST_SIZE || '12', 10) || 12))
+const LIVE_X264_PRESET = process.env.LIVE_X264_PRESET || 'ultrafast'
+const LIVE_X264_THREADS = String(
+  Math.max(1, Number.parseInt(process.env.LIVE_X264_THREADS || '1', 10) || 1)
+)
 
 const PROFILE_ORDER = ['1080p', '720p']
 
@@ -80,6 +84,60 @@ function getOutputRoot(safeHlsPath) {
 
 function getScaleFilter(profile) {
   return `scale=w=${profile.width}:h=${profile.height}:force_original_aspect_ratio=decrease,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2`
+}
+
+function buildLiveFfmpegArgs({ sourceFilePath, profile, variantPlaylist, segmentPattern }) {
+  return [
+    '-y',
+    '-re',
+    '-stream_loop',
+    '-1',
+    '-i',
+    sourceFilePath,
+    '-filter_threads',
+    '1',
+    '-vf',
+    getScaleFilter(profile),
+    '-c:v',
+    'libx264',
+    '-preset',
+    LIVE_X264_PRESET,
+    '-tune',
+    'zerolatency',
+    '-threads',
+    LIVE_X264_THREADS,
+    '-profile:v',
+    'main',
+    '-sc_threshold',
+    '0',
+    '-g',
+    '48',
+    '-keyint_min',
+    '48',
+    '-c:a',
+    'aac',
+    '-ar',
+    '48000',
+    '-b:v',
+    profile.videoBitrate,
+    '-maxrate',
+    profile.maxrate,
+    '-bufsize',
+    profile.bufsize,
+    '-b:a',
+    profile.audioBitrate,
+    '-f',
+    'hls',
+    '-hls_time',
+    LIVE_HLS_TIME_SEC,
+    '-hls_list_size',
+    LIVE_HLS_LIST_SIZE,
+    '-hls_flags',
+    'delete_segments+append_list+independent_segments+omit_endlist',
+    '-hls_segment_filename',
+    segmentPattern,
+    variantPlaylist,
+  ]
 }
 
 function runFfmpeg(args) {
@@ -407,51 +465,12 @@ async function startLiveLoopTranscode({ sourceFilePath, hlsPath, resolutions }) 
       await fs.promises.mkdir(variantDir, { recursive: true })
       await stopLiveProcessByPidFile(pidFilePath)
 
-      const args = [
-        '-y',
-        '-re',
-        '-stream_loop',
-        '-1',
-        '-i',
+      const args = buildLiveFfmpegArgs({
         sourceFilePath,
-        '-vf',
-        getScaleFilter(profile),
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-profile:v',
-        'main',
-        '-sc_threshold',
-        '0',
-        '-g',
-        '48',
-        '-keyint_min',
-        '48',
-        '-c:a',
-        'aac',
-        '-ar',
-        '48000',
-        '-b:v',
-        profile.videoBitrate,
-        '-maxrate',
-        profile.maxrate,
-        '-bufsize',
-        profile.bufsize,
-        '-b:a',
-        profile.audioBitrate,
-        '-f',
-        'hls',
-        '-hls_time',
-        LIVE_HLS_TIME_SEC,
-        '-hls_list_size',
-        LIVE_HLS_LIST_SIZE,
-        '-hls_flags',
-        'delete_segments+append_list+independent_segments+omit_endlist',
-        '-hls_segment_filename',
-        segmentPattern,
+        profile,
         variantPlaylist,
-      ]
+        segmentPattern,
+      })
 
       const pid = await runFfmpegDetached(args)
       await fs.promises.writeFile(pidFilePath, String(pid), 'utf8')
@@ -486,4 +505,5 @@ module.exports = {
   removeHlsOutput,
   normalizeResolutions,
   probeSourceDuration,
+  buildLiveFfmpegArgs,
 }

@@ -27,5 +27,10 @@ python3 03_experiments/06_runtime_metrics/check_collection_gate.py
 root disk 여유 10% 미만, NTP 미동기화, 필수 container 부족 또는 endpoint 실패다.
 `passed: true`인 report가 없는 batch는 실행하지 않는다.
 
+Origin의 LIVE는 3 channel × 2 rendition을 계속 생성한다. 각 `libx264` encoder는
+`ultrafast`, filter thread 1개, encoder thread 1개로 제한한다. 시청 traffic이 없는
+상태에서 gate를 실패할 정도로 encoder가 Origin을 포화시키면 응답시간과 cache 결과가
+encoder 부하의 대리값이 되므로 수집하지 않는다.
+
 20/40/60/80/100 부하 단계의 시계열 sampler와 achieved concurrency 계산은 아직
 구현 대상이다. collection matrix의 `planned_client_count`만으로 실제 동시성을 주장하지 않는다.
