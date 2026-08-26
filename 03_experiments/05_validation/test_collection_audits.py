@@ -22,6 +22,64 @@ CACHE = load_module("validate_edge_cache_pair")
 
 
 class CollectionAuditTest(unittest.TestCase):
+    def test_hard_negative_relationships_are_accepted(self):
+        flash_crowd = {
+            "scenario_id": "N6",
+            "parameters": {
+                "scenario_variant": "flash_crowd",
+                "consumer_count": 2,
+                "shared_account": False,
+                "shared_token": False,
+                "shared_content": True,
+                "actual_account_count": 2,
+            },
+            "token_bindings": [
+                {"content_id": "video_01"},
+                {"content_id": "video_01"},
+            ],
+        }
+        popular_live = {
+            "scenario_id": "N7",
+            "parameters": {
+                "scenario_variant": "popular_channel",
+                "consumer_count": 2,
+                "shared_token": False,
+                "client_results": [
+                    {"traffic": {"rolling_playlist": True}},
+                    {"traffic": {"rolling_playlist": True}},
+                ],
+            },
+            "token_bindings": [
+                {"content_id": "live_01"},
+                {"content_id": "live_01"},
+            ],
+        }
+
+        self.assertEqual(COLLECTION.scenario_errors(flash_crowd), [])
+        self.assertEqual(COLLECTION.scenario_errors(popular_live), [])
+
+    def test_invalid_hard_negative_relationship_is_rejected(self):
+        manifest = {
+            "scenario_id": "N6",
+            "parameters": {
+                "scenario_variant": "flash_crowd",
+                "consumer_count": 2,
+                "shared_account": True,
+                "shared_token": False,
+                "shared_content": False,
+                "actual_account_count": 1,
+            },
+            "token_bindings": [
+                {"content_id": "video_01"},
+                {"content_id": "video_02"},
+            ],
+        }
+
+        errors = COLLECTION.scenario_errors(manifest)
+
+        self.assertTrue(any("independent accounts" in item for item in errors))
+        self.assertTrue(any("one shared content" in item for item in errors))
+
     def test_network_gate_accepts_all_applied_profiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

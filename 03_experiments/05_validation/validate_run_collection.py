@@ -250,6 +250,8 @@ def analyze(
         )
 
     scenario_id = str(manifest.get("scenario_id") or "")
+    parameters = manifest.get("parameters", {})
+    scenario_variant = str(parameters.get("scenario_variant") or "")
     if scenario_id in {"A1", "A7"}:
         if len(bindings) != 1:
             errors.append(f"{scenario_id} must have exactly one shared token binding")
@@ -267,7 +269,21 @@ def analyze(
         if sum(item["neo4j_device_count"] for item in token_reports) < 4:
             errors.append("A6 requires four observed consumer devices")
     if scenario_id == "N6" and len(bindings) < 2:
-        errors.append("N6 requires separate playback tokens for at least two household consumers")
+        errors.append("N6 requires separate playback tokens for at least two normal viewers")
+    if scenario_id == "N6" and scenario_variant == "flash_crowd":
+        expected_viewers = int(parameters.get("consumer_count") or 0)
+        if len(bindings) != expected_viewers or len(actual_all_ips) < 2:
+            errors.append("N6 flash_crowd requires separate observed viewers and tokens")
+        if len({str(item.get("content_id") or "") for item in bindings} - {""}) != 1:
+            errors.append("N6 flash_crowd token bindings must target one content")
+    if scenario_id == "N7" and scenario_variant == "popular_channel":
+        expected_viewers = int(parameters.get("consumer_count") or 0)
+        if expected_viewers < 2 or len(bindings) != expected_viewers:
+            errors.append("N7 popular_channel requires at least two independent token bindings")
+        if len(actual_all_ips) < 2:
+            errors.append("N7 popular_channel requires at least two observed HLS source IPs")
+        if len({str(item.get("content_id") or "") for item in bindings} - {""}) != 1:
+            errors.append("N7 popular_channel token bindings must target one LIVE content")
 
     return {
         "run_id": manifest.get("run_id"),

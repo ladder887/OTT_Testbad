@@ -71,6 +71,9 @@ python3 03_experiments/05_validation/audit_pilot_collection.py \
 
 P0~P4가 실제 적용된 별도 network pilot은 `--mode network`로 검사한다. `main` mode는
 모든 시나리오, 실제 network 적용, 4개 Edge와 최소 5개 host coverage를 함께 요구한다.
+또한 N1 length/catalog 변형, N6 household/flash crowd, N7 single/popular LIVE와
+A1/A2/A3/A7의 약한·강한 variant가 모두 존재해야 한다. N6 flash crowd와 N7 popular
+LIVE는 같은 content를 독립 account/token으로 소비했는지도 검사한다.
 
 ## Dataset label-proxy 감사
 

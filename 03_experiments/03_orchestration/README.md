@@ -49,6 +49,7 @@ export CLIENT_PARENT_INTERFACE=enp1s0
 cd ~/OTT_Testbad
 python3 03_experiments/03_orchestration/run_scenario.py \
   --scenario N1 \
+  --variant catalog_preview \
   --smoke \
   --seed 2026082601 \
   --cache-state cold
@@ -58,11 +59,17 @@ python3 03_experiments/03_orchestration/run_scenario.py \
 `manifest_path`를 `validate_run_collection.py --manifest`에 그대로 넣는다.
 
 - N6는 2~4개 container가 같은 account로 각자 token을 발급한다.
+- N6 `flash_crowd`는 2~5개 독립 account/token이 같은 VOD를 정상 속도로 동시에 본다.
+- N7 `popular_channel`은 2~5개 독립 account/token이 같은 LIVE channel을 동시에 본다.
 - A1/A7은 owner가 발급한 token URL을 실제 2~5개 consumer container에 전달한다.
 - A3는 한 container 안에서 2~4 worker thread가 실제 동시에 요청한다.
 - A6는 네 container와 네 account/token을 순서대로 교대한다.
 - A4는 현재 2개 rendition이라 거부한다.
 - A5는 주 ViewingSession task가 아니므로 거부한다.
+
+`--variant`를 생략하면 기준 variant를 사용한다. `--variant auto`는 seed 기반으로
+재현 가능하게 선택하지만, 정식 수집에서는 variant별 표본 수가 달라지지 않도록 값을
+직접 지정한다. 전체 목록은 `03_experiments/02_scenarios/README.md`에 있다.
 
 `--cache-state`는 `cold`, `warmup`, `warm`, `mixed`, `unspecified` 중 하나를
 manifest에 기록한다. 이 옵션 자체가 Edge cache를 변경하지 않는다. cold run 전에는

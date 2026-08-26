@@ -63,7 +63,7 @@ class ScenarioCoordinatorTest(unittest.TestCase):
     def setUpClass(cls):
         cls.clients = RUNNER.load_inventory(RUNNER.DEFAULT_INVENTORY)
 
-    def run_scenario(self, scenario_id):
+    def run_scenario(self, scenario_id, variant="default"):
         with tempfile.TemporaryDirectory() as temp_dir:
             coordinator = RUNNER.ScenarioCoordinator(
                 clients=self.clients,
@@ -73,6 +73,7 @@ class ScenarioCoordinatorTest(unittest.TestCase):
                 smoke=True,
                 dataset_prefix="tnsm_100lc_20260826_smoke",
                 output_dir=Path(temp_dir),
+                variant=variant,
             )
             manifest, path = coordinator.execute()
             persisted = json.loads(path.read_text(encoding="utf-8"))
@@ -90,13 +91,70 @@ class ScenarioCoordinatorTest(unittest.TestCase):
         self.assertNotIn("token=secret", json.dumps(persisted))
 
     def test_a1_uses_one_owner_and_two_real_consumers(self):
-        manifest, _ = self.run_scenario("A1")
+        manifest, _ = self.run_scenario("A1", "low_fanout")
 
         self.assertEqual(len(manifest["logical_client_ids"]), 3)
         self.assertEqual(len(manifest["token_bindings"]), 1)
         binding = manifest["token_bindings"][0]
         self.assertEqual(len(binding["consumer_logical_client_ids"]), 2)
         self.assertNotIn(binding["owner_logical_client_id"], binding["consumer_logical_client_ids"])
+
+    def test_n1_catalog_preview_uses_multiple_contents_and_separate_tokens(self):
+        manifest, _ = self.run_scenario("N1", "catalog_preview")
+
+        self.assertEqual(manifest["parameters"]["scenario_variant"], "catalog_preview")
+        self.assertGreaterEqual(manifest["parameters"]["content_count"], 2)
+        self.assertEqual(len(manifest["logical_client_ids"]), 1)
+        self.assertEqual(len(manifest["token_bindings"]), manifest["parameters"]["content_count"])
+        self.assertEqual(
+            len({item["content_id"] for item in manifest["token_bindings"]}),
+            manifest["parameters"]["content_count"],
+        )
+
+    def test_n6_flash_crowd_uses_one_content_with_independent_tokens(self):
+        manifest, _ = self.run_scenario("N6", "flash_crowd")
+
+        count = manifest["parameters"]["consumer_count"]
+        self.assertEqual(count, 2)
+        self.assertEqual(len(manifest["token_bindings"]), count)
+        self.assertEqual(len({item["content_id"] for item in manifest["token_bindings"]}), 1)
+        self.assertEqual(
+            {item["owner_logical_client_id"] for item in manifest["token_bindings"]},
+            set(manifest["logical_client_ids"]),
+        )
+        self.assertFalse(manifest["parameters"]["shared_account"])
+        self.assertFalse(manifest["parameters"]["shared_token"])
+
+    def test_n7_popular_channel_uses_independent_live_tokens(self):
+        manifest, _ = self.run_scenario("N7", "popular_channel")
+
+        count = manifest["parameters"]["consumer_count"]
+        self.assertEqual(count, 2)
+        self.assertEqual(len(manifest["token_bindings"]), count)
+        self.assertEqual(len({item["content_id"] for item in manifest["token_bindings"]}), 1)
+        self.assertFalse(manifest["parameters"]["shared_token"])
+
+    def test_attack_strength_variants_are_explicit(self):
+        a1_high, _ = self.run_scenario("A1", "high_fanout")
+        a2_fast, _ = self.run_scenario("A2", "fast")
+        a3_high, _ = self.run_scenario("A3", "high_parallel")
+
+        self.assertEqual(a1_high["parameters"]["consumer_count"], 3)
+        self.assertEqual(a2_fast["parameters"]["download_variant"], "fast")
+        self.assertEqual(a3_high["parameters"]["worker_count"], 3)
+
+    def test_invalid_variant_is_rejected(self):
+        with self.assertRaisesRegex(RUNNER.CoordinatorError, "unsupported variant"):
+            self.run_scenario("A2", "not_a_variant")
+
+    def test_auto_variant_is_reproducible_for_the_same_seed(self):
+        first, _ = self.run_scenario("N1", "auto")
+        second, _ = self.run_scenario("N1", "auto")
+
+        self.assertEqual(
+            first["parameters"]["scenario_variant"],
+            second["parameters"]["scenario_variant"],
+        )
 
     def test_every_supported_scenario_builds_a_completed_smoke_manifest(self):
         with mock.patch.object(RUNNER.time, "sleep", return_value=None):

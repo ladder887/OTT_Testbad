@@ -14,6 +14,25 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INVENTORY = REPOSITORY_ROOT / "03_experiments" / "07_generated" / "logical_clients.json"
 EXPECTED_SCENARIOS = {*(f"N{index}" for index in range(1, 8)), "A1", "A2", "A3", "A6", "A7"}
+EXPECTED_VARIANTS = {
+    "N1": {"preview", "standard", "long", "catalog_preview"},
+    "N2": {"default"},
+    "N3": {"default"},
+    "N4": {"default"},
+    "N5": {"default"},
+    "N6": {"household", "flash_crowd"},
+    "N7": {"single", "popular_channel"},
+    "A1": {"low_fanout", "high_fanout"},
+    "A2": {"fast", "stealth"},
+    "A3": {"low_parallel", "high_parallel"},
+    "A6": {"low_rate"},
+    "A7": {"low_fanout", "high_fanout"},
+}
+REQUIRED_MAIN_VARIANTS = {
+    (scenario_id, variant)
+    for scenario_id, variants in EXPECTED_VARIANTS.items()
+    for variant in variants
+}
 EXPECTED_PROFILES = {f"P{index}" for index in range(5)}
 EXPECTED_PROFILE_VALUES = {
     "P0": (0.0, 0.0),
@@ -85,21 +104,42 @@ def scenario_errors(manifest: dict[str, Any]) -> list[str]:
     scenario_id = str(manifest.get("scenario_id") or "")
     parameters = manifest.get("parameters", {})
     bindings = manifest.get("token_bindings", [])
+    variant = str(parameters.get("scenario_variant") or "")
     errors: list[str] = []
+
+    if variant and variant not in EXPECTED_VARIANTS.get(scenario_id, set()):
+        errors.append(f"{scenario_id} has unsupported scenario_variant: {variant}")
+
+    if scenario_id == "N1" and variant == "catalog_preview":
+        content_count = int(parameters.get("content_count") or 0)
+        if content_count < 2 or len(bindings) != content_count:
+            errors.append("N1 catalog_preview requires at least two contents with separate tokens")
+        if int(parameters.get("concurrency") or 0) != 1:
+            errors.append("N1 catalog_preview must remain serial")
 
     if scenario_id in {"A1", "A7"}:
         if parameters.get("shared_token") is not True or len(bindings) != 1:
             errors.append(f"{scenario_id} must use one shared token")
         if int(parameters.get("consumer_count") or 0) < 2:
             errors.append(f"{scenario_id} must have at least two consumers")
+        if variant == "low_fanout" and int(parameters.get("consumer_count") or 0) != 2:
+            errors.append(f"{scenario_id} low_fanout must use exactly two consumers")
+        if variant == "high_fanout" and int(parameters.get("consumer_count") or 0) < 3:
+            errors.append(f"{scenario_id} high_fanout must use at least three consumers")
     elif scenario_id == "A2":
         if int(parameters.get("content_count") or 0) < 2:
             errors.append("A2 must harvest at least two contents")
         if int(parameters.get("concurrency") or 0) != 1:
             errors.append("A2 must remain serial")
+        if variant and parameters.get("download_variant") != variant:
+            errors.append("A2 scenario_variant and download_variant do not match")
     elif scenario_id == "A3":
         if int(parameters.get("worker_count") or 0) < 2:
             errors.append("A3 must use at least two workers")
+        if variant == "low_parallel" and int(parameters.get("worker_count") or 0) != 2:
+            errors.append("A3 low_parallel must use exactly two workers")
+        if variant == "high_parallel" and int(parameters.get("worker_count") or 0) < 3:
+            errors.append("A3 high_parallel must use at least three workers")
     elif scenario_id == "A6":
         if int(parameters.get("participant_count") or 0) != 4:
             errors.append("A6 must use four participant containers")
@@ -110,6 +150,29 @@ def scenario_errors(manifest: dict[str, Any]) -> list[str]:
     elif scenario_id == "N6":
         if int(parameters.get("consumer_count") or 0) < 2 or len(bindings) < 2:
             errors.append("N6 must use at least two consumers with separate tokens")
+        if parameters.get("shared_token") is not False:
+            errors.append("N6 must not share one CDN token across viewers")
+        if variant == "household":
+            if parameters.get("shared_account") is not True or int(parameters.get("actual_account_count") or 0) != 1:
+                errors.append("N6 household must use one shared account with separate tokens")
+        elif variant == "flash_crowd":
+            content_ids = {str(item.get("content_id") or "") for item in bindings}
+            if parameters.get("shared_account") is not False:
+                errors.append("N6 flash_crowd must use independent accounts")
+            if parameters.get("shared_content") is not True or len(content_ids - {""}) != 1:
+                errors.append("N6 flash_crowd must watch one shared content")
+            if int(parameters.get("actual_account_count") or 0) < 2:
+                errors.append("N6 flash_crowd requires at least two independent accounts")
+
+    if scenario_id == "N7" and variant == "popular_channel":
+        consumer_count = int(parameters.get("consumer_count") or 0)
+        content_ids = {str(item.get("content_id") or "") for item in bindings}
+        if consumer_count < 2 or len(bindings) != consumer_count:
+            errors.append("N7 popular_channel requires at least two viewers with separate tokens")
+        if parameters.get("shared_token") is not False:
+            errors.append("N7 popular_channel must use independent CDN tokens")
+        if len(content_ids - {""}) != 1:
+            errors.append("N7 popular_channel viewers must watch the same LIVE content")
 
     if scenario_id in {"N7", "A7"}:
         results = parameters.get("client_results", [])
@@ -132,6 +195,7 @@ def audit(
     run_ids: set[str] = set()
     token_ids: set[str] = set()
     scenario_counts: Counter[str] = Counter()
+    variant_counts: Counter[str] = Counter()
     coverage: dict[str, Counter[str]] = {
         "physical_host_id": Counter(),
         "edge_id": Counter(),
@@ -169,6 +233,9 @@ def audit(
             run_errors.append(f"unsupported scenario_id: {scenario_id or '<missing>'}")
         else:
             scenario_counts[scenario_id] += 1
+            variant = str(manifest.get("parameters", {}).get("scenario_variant") or "")
+            if variant:
+                variant_counts[f"{scenario_id}:{variant}"] += 1
         dataset_prefixes[str(manifest.get("dataset_prefix") or "")] += 1
 
         validation_file = validation_path(path)
@@ -256,6 +323,7 @@ def audit(
                 "manifest": str(path),
                 "run_id": run_id,
                 "scenario_id": scenario_id,
+                "scenario_variant": str(manifest.get("parameters", {}).get("scenario_variant") or ""),
                 "validation_passed": validation_pass,
                 "selected_client_count": len(clients),
                 "errors": run_errors,
@@ -263,9 +331,16 @@ def audit(
         )
 
     missing_scenarios = sorted(EXPECTED_SCENARIOS - set(scenario_counts))
+    missing_main_variants = sorted(
+        f"{scenario_id}:{variant}"
+        for scenario_id, variant in REQUIRED_MAIN_VARIANTS
+        if variant_counts[f"{scenario_id}:{variant}"] == 0
+    )
     missing_applied_profiles = sorted(EXPECTED_PROFILES - set(applied_profiles))
     if mode in {"scenario", "main"} and missing_scenarios:
         errors.append(f"required scenarios are missing: {missing_scenarios}")
+    if mode == "main" and missing_main_variants:
+        errors.append(f"required scenario variants are missing: {missing_main_variants}")
     if mode in {"network", "main"}:
         if missing_applied_profiles:
             errors.append(f"network profiles were not actually applied: {missing_applied_profiles}")
@@ -294,7 +369,9 @@ def audit(
         "manifest_count": len(manifest_paths),
         "validation_passed_count": validation_passed,
         "scenario_counts": dict(sorted(scenario_counts.items())),
+        "variant_counts": dict(sorted(variant_counts.items())),
         "missing_scenarios": missing_scenarios,
+        "missing_main_variants": missing_main_variants,
         "coverage": {
             key: dict(sorted(counter.items()))
             for key, counter in coverage.items()

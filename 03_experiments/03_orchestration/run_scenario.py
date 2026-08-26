@@ -29,6 +29,35 @@ MAIN_ATTACK_SCENARIOS = {"A1", "A2", "A3", "A6", "A7"}
 SUPPORTED_SCENARIOS = NORMAL_SCENARIOS | MAIN_ATTACK_SCENARIOS
 ATTACK_FAMILY = {"A1": "M1", "A2": "M2", "A3": "M2", "A6": "M4", "A7": "M5"}
 
+SCENARIO_VARIANTS = {
+    "N1": ("preview", "standard", "long", "catalog_preview"),
+    "N2": ("default",),
+    "N3": ("default",),
+    "N4": ("default",),
+    "N5": ("default",),
+    "N6": ("household", "flash_crowd"),
+    "N7": ("single", "popular_channel"),
+    "A1": ("low_fanout", "high_fanout"),
+    "A2": ("fast", "stealth"),
+    "A3": ("low_parallel", "high_parallel"),
+    "A6": ("low_rate",),
+    "A7": ("low_fanout", "high_fanout"),
+}
+DEFAULT_VARIANTS = {
+    "N1": "standard",
+    "N2": "default",
+    "N3": "default",
+    "N4": "default",
+    "N5": "default",
+    "N6": "household",
+    "N7": "single",
+    "A1": "low_fanout",
+    "A2": "stealth",
+    "A3": "low_parallel",
+    "A6": "low_rate",
+    "A7": "low_fanout",
+}
+
 BROWSER_USER_AGENTS = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
@@ -42,6 +71,20 @@ TOOL_USER_AGENTS = (
     "Wget/1.21.4",
 )
 
+STANDARD_VOD_CONTENT_IDS = tuple(
+    content_id for content_id in (f"video_{index:02d}" for index in range(1, 16))
+    if content_id not in {"video_07", "video_08"}
+)
+LONG_VOD_CONTENT_IDS = (
+    "video_01",
+    "video_04",
+    "video_06",
+    "video_09",
+    "video_10",
+    "video_13",
+    "video_14",
+)
+
 
 class CoordinatorError(RuntimeError):
     """Raised when a remote scenario action cannot be completed."""
@@ -52,6 +95,21 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def resolve_scenario_variant(scenario_id: str, requested_variant: str, seed: int) -> str:
+    allowed = SCENARIO_VARIANTS[scenario_id]
+    normalized = requested_variant.strip().lower().replace("-", "_") or "default"
+    if normalized == "default":
+        return DEFAULT_VARIANTS[scenario_id]
+    if normalized == "auto":
+        scenario_salt = sum((index + 1) * ord(character) for index, character in enumerate(scenario_id))
+        return random.Random(seed + scenario_salt).choice(allowed)
+    if normalized not in allowed:
+        raise CoordinatorError(
+            f"unsupported variant for {scenario_id}: {requested_variant}; allowed={','.join(allowed)}"
+        )
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -204,7 +262,8 @@ def select_clients(clients: list[LogicalClient], count: int, seed: int) -> list[
 
 
 def choose_camouflage(rng: random.Random, content_id: str, attack: bool, offset: int = 0) -> dict[str, Any]:
-    browser_probability = 0.60 if attack else 0.80
+    del attack
+    browser_probability = 0.70
     browser = rng.random() < browser_probability
     pool = BROWSER_USER_AGENTS if browser else TOOL_USER_AGENTS
     user_agent = pool[(rng.randrange(len(pool)) + offset) % len(pool)]
@@ -218,7 +277,7 @@ def choose_camouflage(rng: random.Random, content_id: str, attack: bool, offset:
     else:
         referrer_mode = "external"
         referrer = "https://example.org/"
-    browse = rng.random() < (0.65 if attack else 0.80)
+    browse = rng.random() < 0.70
     return {
         "ua_mode": "browser" if browser else "tool",
         "user_agent": user_agent,
@@ -276,6 +335,7 @@ class ScenarioCoordinator:
         dataset_prefix: str,
         output_dir: Path,
         cache_state: str = "unspecified",
+        variant: str = "default",
     ) -> None:
         self.clients = clients
         self.executor = executor
@@ -285,11 +345,15 @@ class ScenarioCoordinator:
         self.dataset_prefix = dataset_prefix
         self.output_dir = output_dir
         self.rng = random.Random(seed)
+        self.requested_variant = variant.strip().lower().replace("-", "_") or "default"
+        self.variant = resolve_scenario_variant(scenario_id, self.requested_variant, seed)
         self.selected: list[LogicalClient] = []
         self.parameters: dict[str, Any] = {
             "collection_mode": "smoke" if smoke else "main",
             "timing_scaled": smoke,
             "cache_state": cache_state,
+            "scenario_variant": self.variant,
+            "requested_variant": self.requested_variant,
         }
         self.remote_results: list[dict[str, Any]] = []
         self.token_bindings: list[dict[str, Any]] = []
@@ -364,12 +428,70 @@ class ScenarioCoordinator:
         self.parameters.update({"content_id": content_id, "camouflage": camouflage, "phases": phases})
 
     def run_n1(self) -> None:
+        if self.variant == "catalog_preview":
+            self._run_n1_catalog_preview()
+            return
+
+        profile_ranges = {
+            "preview": (5, 15),
+            "standard": (30, 75),
+            "long": (90, 200),
+        }
+        low, high = profile_ranges[self.variant]
+        if self.variant == "long":
+            content_id = self.rng.choice(LONG_VOD_CONTENT_IDS)
+        elif self.variant == "standard":
+            content_id = self.rng.choice(STANDARD_VOD_CONTENT_IDS)
+        else:
+            content_id = self.content()
         phase = vod_phase(
-            self.count(30, 75, 5),
+            self.count(low, high, 5),
             delay=self.delay((5.2, 6.9)),
             initial_buffer_count=3,
         )
-        self.single_vod([phase])
+        self.single_vod([phase], content_id=content_id)
+        self.parameters["viewing_profile"] = self.variant
+
+    def _run_n1_catalog_preview(self) -> None:
+        client = select_clients(self.clients, 1, self.seed)[0]
+        self.selected = [client]
+        content_count = self.count(2, 5, 2)
+        content_ids: list[str] = []
+        while len(content_ids) < content_count:
+            content_ids.append(self.content(exclude=set(content_ids)))
+
+        camouflage = choose_camouflage(self.rng, content_ids[0], attack=False)
+        flows: list[dict[str, Any]] = []
+        for index, content_id in enumerate(content_ids):
+            flow = {
+                "content_id": content_id,
+                "browse": True if index else camouflage["browse"],
+                "phases": [
+                    vod_phase(
+                        self.count(5, 15, 3),
+                        delay=self.delay((5.0, 6.8)),
+                        initial_buffer_count=2,
+                    )
+                ],
+            }
+            if index:
+                flow["pause_before_sec"] = self.pause(8.0, 45.0, 0.2)
+            flows.append(flow)
+
+        spec = {**common_spec(self.seed, camouflage, "multi_vod"), "flows": flows}
+        result = self.run_one(Assignment(client, spec, "catalog_preview_viewer"))
+        self._record_playback_bindings(result, client)
+        self.parameters.update(
+            {
+                "content_ids": content_ids,
+                "content_count": content_count,
+                "viewing_profile": "catalog_preview",
+                "concurrency": 1,
+                "shared_token": False,
+                "camouflage": camouflage,
+                "flows": flows,
+            }
+        )
 
     def run_n2(self) -> None:
         before = self.count(15, 25, 3)
@@ -445,6 +567,10 @@ class ScenarioCoordinator:
         )
 
     def run_n6(self) -> None:
+        if self.variant == "flash_crowd":
+            self._run_n6_flash_crowd()
+            return
+
         consumer_count = self.count(2, 4, 2)
         selected = select_clients(self.clients, consumer_count, self.seed)
         self.selected = selected
@@ -485,11 +611,65 @@ class ScenarioCoordinator:
                 "consumer_count": consumer_count,
                 "household_account_owner": selected[0].logical_client_id,
                 "members": member_parameters,
+                "shared_account": True,
                 "shared_token": False,
+                "shared_content": False,
+                "actual_account_count": 1,
+                "actual_token_count": len(self.token_bindings),
+            }
+        )
+
+    def _run_n6_flash_crowd(self) -> None:
+        consumer_count = self.count(2, 5, 2)
+        selected = select_clients(self.clients, consumer_count, self.seed)
+        self.selected = selected
+        content_id = self.content()
+        assignments: list[Assignment] = []
+        viewer_parameters: list[dict[str, Any]] = []
+        for index, client in enumerate(selected):
+            camouflage = choose_camouflage(self.rng, content_id, attack=False, offset=index)
+            phase = vod_phase(
+                self.count(30, 50, 4),
+                delay=self.delay((5.1, 6.7)),
+                initial_buffer_count=2,
+            )
+            spec = {
+                **common_spec(self.seed + index, camouflage, "vod"),
+                "content_id": content_id,
+                "browse": camouflage["browse"],
+                "phases": [phase],
+            }
+            assignments.append(Assignment(client, spec, "flash_crowd_viewer"))
+            viewer_parameters.append(
+                {
+                    "logical_client_id": client.logical_client_id,
+                    "content_id": content_id,
+                    "camouflage": camouflage,
+                    "phase": phase,
+                }
+            )
+
+        results = self.run_parallel(assignments)
+        for client, result in zip(selected, results):
+            self._record_playback_bindings(result, client)
+        self.parameters.update(
+            {
+                "content_id": content_id,
+                "consumer_count": consumer_count,
+                "viewers": viewer_parameters,
+                "shared_account": False,
+                "shared_token": False,
+                "shared_content": True,
+                "actual_account_count": consumer_count,
+                "actual_token_count": len(self.token_bindings),
             }
         )
 
     def run_n7(self) -> None:
+        if self.variant == "popular_channel":
+            self._run_n7_popular_channel()
+            return
+
         client = select_clients(self.clients, 1, self.seed)[0]
         self.selected = [client]
         content_id = self.content(live=True)
@@ -506,10 +686,74 @@ class ScenarioCoordinator:
         self._record_playback_bindings(result, client)
         if not result.get("traffic", {}).get("rolling_playlist"):
             raise CoordinatorError("N7 LIVE playlist did not advance during the run")
-        self.parameters.update({"content_id": content_id, "camouflage": camouflage, "live": live})
+        self.parameters.update(
+            {
+                "content_id": content_id,
+                "consumer_count": 1,
+                "camouflage": camouflage,
+                "live": live,
+                "shared_token": False,
+                "actual_token_count": 1,
+            }
+        )
+
+    def _run_n7_popular_channel(self) -> None:
+        consumer_count = self.count(2, 5, 2)
+        selected = select_clients(self.clients, consumer_count, self.seed)
+        self.selected = selected
+        content_id = self.content(live=True)
+        duration_sec = self.pause(220, 420, 15.0)
+        assignments: list[Assignment] = []
+        viewer_parameters: list[dict[str, Any]] = []
+        for index, client in enumerate(selected):
+            camouflage = choose_camouflage(self.rng, content_id, attack=False, offset=index)
+            live = {
+                "duration_sec": duration_sec,
+                "rendition": "720p",
+                "poll_factor": 1.0,
+                "initial_segments": 2,
+            }
+            spec = {
+                **common_spec(self.seed + index, camouflage, "live"),
+                "content_id": content_id,
+                "browse": camouflage["browse"],
+                "live": live,
+            }
+            assignments.append(Assignment(client, spec, "popular_live_viewer"))
+            viewer_parameters.append(
+                {
+                    "logical_client_id": client.logical_client_id,
+                    "camouflage": camouflage,
+                    "live": live,
+                }
+            )
+
+        results = self.run_parallel(assignments)
+        if any(not result.get("traffic", {}).get("rolling_playlist") for result in results):
+            raise CoordinatorError("N7 popular-channel LIVE playlist did not advance for every viewer")
+        for client, result in zip(selected, results):
+            self._record_playback_bindings(result, client)
+        self.parameters.update(
+            {
+                "content_id": content_id,
+                "consumer_count": consumer_count,
+                "viewers": viewer_parameters,
+                "live": {
+                    "duration_sec": duration_sec,
+                    "rendition": "720p",
+                    "poll_factor": 1.0,
+                    "initial_segments": 2,
+                },
+                "shared_account": False,
+                "shared_token": False,
+                "shared_content": True,
+                "actual_account_count": consumer_count,
+                "actual_token_count": len(self.token_bindings),
+            }
+        )
 
     def _run_token_relay(self, live: bool) -> None:
-        consumer_count = self.count(2, 5, 2)
+        consumer_count = 2 if self.variant == "low_fanout" else self.count(3, 5, 3)
         selected = select_clients(self.clients, consumer_count + 1, self.seed)
         owner = selected[0]
         consumers = selected[1:]
@@ -575,6 +819,7 @@ class ScenarioCoordinator:
             {
                 "content_id": content_id,
                 "consumer_count": consumer_count,
+                "fanout_variant": self.variant,
                 "owner_logical_client_id": owner.logical_client_id,
                 "owner_camouflage": owner_camouflage,
                 "consumers": consumer_parameters,
@@ -595,7 +840,7 @@ class ScenarioCoordinator:
             candidate = self.content(exclude=set(content_ids))
             content_ids.append(candidate)
         camouflage = choose_camouflage(self.rng, content_ids[0], attack=True)
-        variant = self.rng.choice(["fast", "stealth"])
+        variant = self.variant
         delay = self.delay((0.4, 1.5) if variant == "fast" else (2.5, 5.5))
         flows = []
         for index, content_id in enumerate(content_ids):
@@ -631,8 +876,12 @@ class ScenarioCoordinator:
         client = select_clients(self.clients, 1, self.seed)[0]
         self.selected = [client]
         content_id = self.content()
-        workers = self.count(2, 4, 2)
-        segment_count = self.count(32, 76, 6)
+        if self.variant == "low_parallel":
+            workers = 2
+            segment_count = self.count(32, 50, 6)
+        else:
+            workers = self.count(3, 4, 3)
+            segment_count = self.count(51, 76, 8)
         camouflage = choose_camouflage(self.rng, content_id, attack=True)
         phase = vod_phase(
             segment_count,
@@ -651,6 +900,7 @@ class ScenarioCoordinator:
             {
                 "content_id": content_id,
                 "worker_count": workers,
+                "parallel_variant": self.variant,
                 "range_overlap_ratio": 0.0,
                 "camouflage": camouflage,
                 "phase": phase,
@@ -733,7 +983,16 @@ class ScenarioCoordinator:
         manifest_path = self.output_dir / f"{run_id}.json"
 
         if dry_run:
-            preview_count = 3 if self.scenario_id in {"A1", "A7"} else 4 if self.scenario_id in {"N6", "A6"} else 1
+            if self.scenario_id in {"A1", "A7"}:
+                preview_count = 3 if self.variant == "low_fanout" else 6
+            elif self.scenario_id == "N6":
+                preview_count = 5 if self.variant == "flash_crowd" else 4
+            elif self.scenario_id == "N7" and self.variant == "popular_channel":
+                preview_count = 5
+            elif self.scenario_id == "A6":
+                preview_count = 4
+            else:
+                preview_count = 1
             self.selected = select_clients(self.clients, preview_count, self.seed)
             manifest["logical_client_ids"] = [item.logical_client_id for item in self.selected]
             manifest["parameters"] = {
@@ -795,6 +1054,11 @@ class ScenarioCoordinator:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", required=True, help="N1-N7 or A1/A2/A3/A6/A7")
+    parser.add_argument(
+        "--variant",
+        default="default",
+        help="scenario-specific variant; use 'auto' for deterministic seed-based selection",
+    )
     parser.add_argument("--seed", type=int, default=20260826)
     parser.add_argument("--smoke", action="store_true", help="scale counts and delays for pipeline verification only")
     parser.add_argument("--dry-run", action="store_true", help="select clients and write a scheduled manifest without traffic")
@@ -827,6 +1091,11 @@ def main() -> int:
     if scenario_id not in SUPPORTED_SCENARIOS:
         print(f"unsupported scenario: {scenario_id}; supported={','.join(sorted(SUPPORTED_SCENARIOS))}", file=sys.stderr)
         return 2
+    try:
+        resolve_scenario_variant(scenario_id, args.variant, args.seed)
+    except CoordinatorError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     dataset_prefix = args.dataset_prefix.strip() or (
         f"tnsm_100lc_{datetime.now(timezone.utc):%Y%m%d}_{'smoke' if args.smoke else 'main'}"
@@ -842,6 +1111,7 @@ def main() -> int:
         dataset_prefix=dataset_prefix,
         output_dir=args.output_dir.resolve(),
         cache_state=args.cache_state,
+        variant=args.variant,
     )
     try:
         manifest, path = coordinator.execute(dry_run=args.dry_run)
@@ -854,6 +1124,7 @@ def main() -> int:
             {
                 "run_id": manifest["run_id"],
                 "scenario_id": manifest["scenario_id"],
+                "scenario_variant": manifest["parameters"]["scenario_variant"],
                 "status": manifest["status"],
                 "logical_client_ids": manifest["logical_client_ids"],
                 "observed_request_count": manifest["observed_request_count"],
