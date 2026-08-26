@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def load_exporter_module():
@@ -17,6 +18,21 @@ EXPORTER = load_exporter_module()
 
 
 class SessionDatasetExportTest(unittest.TestCase):
+    def test_graph_query_uses_a_node_map_projection(self):
+        with mock.patch.object(EXPORTER, "neo4j_query", return_value=[]) as query:
+            rows = EXPORTER.query_graph_sessions(
+                "http://neo4j.test:7474",
+                "neo4j",
+                "password",
+                ["cdn_1"],
+            )
+
+        self.assertEqual(rows, [])
+        statement = query.call_args.args[3]
+        self.assertIn("session {", statement)
+        self.assertIn(".*", statement)
+        self.assertNotIn("properties(session) +", statement)
+
     def test_features_are_derived_from_requests_and_token_relations(self):
         token_id = "cdn_111111111111111111111111"
         graph_rows = [

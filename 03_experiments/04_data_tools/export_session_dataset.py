@@ -347,7 +347,8 @@ def query_graph_sessions(
         observed_device_id: request.observed_device_id
     }) AS requests
     RETURN token_id AS cdn_token_id,
-           properties(session) + {
+           session {
+               .*,
                client_ip: client_ip,
                observed_device_id: observed_device_id
            } AS session,
