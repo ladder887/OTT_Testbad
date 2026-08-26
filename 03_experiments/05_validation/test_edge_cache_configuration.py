@@ -63,6 +63,19 @@ class EdgeCacheConfigurationTest(unittest.TestCase):
         self.assertIn('Cache-Control "public, max-age=300, immutable"', live_segment)
         self.assertIn('Cache-Control "public, max-age=3600, immutable"', vod)
 
+    def test_platform_deployment_reloads_bind_mounted_origin_config(self):
+        playbook = (
+            REPOSITORY_ROOT
+            / "02_deployment"
+            / "09_remote-management"
+            / "playbooks"
+            / "02_deploy_platform.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Validate the bind-mounted Origin Nginx configuration", playbook)
+        self.assertIn("argv: [docker, exec, ott-origin-nginx, nginx, -t]", playbook)
+        self.assertIn("argv: [docker, exec, ott-origin-nginx, nginx, -s, reload]", playbook)
+
 
 if __name__ == "__main__":
     unittest.main()

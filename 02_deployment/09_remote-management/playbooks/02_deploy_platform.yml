@@ -119,6 +119,16 @@
         chdir: "{{ project_root }}/{{ deployment_path }}"
       changed_when: true
 
+    - name: Validate the bind-mounted Origin Nginx configuration
+      ansible.builtin.command:
+        argv: [docker, exec, ott-origin-nginx, nginx, -t]
+      changed_when: false
+
+    - name: Reload Origin Nginx after configuration changes
+      ansible.builtin.command:
+        argv: [docker, exec, ott-origin-nginx, nginx, -s, reload]
+      changed_when: true
+
     - name: Wait for API
       ansible.builtin.uri:
         url: http://127.0.0.1:3001/health
