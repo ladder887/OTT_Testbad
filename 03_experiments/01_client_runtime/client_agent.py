@@ -37,7 +37,7 @@ SIGNED_QUERY_KEYS = ("token", "sig")
 @dataclass(frozen=True)
 class NetworkProfile:
     profile_id: str
-    target_rtt_ms: float
+    configured_added_rtt_ms: float
     one_way_delay_ms: float
     one_way_jitter_ms: float
     one_way_loss_percent: float
@@ -205,10 +205,14 @@ def configure_network_profile(config: ClientConfig, interface: str = "eth0") -> 
     return {
         "profile_id": profile.profile_id,
         "mode": "baseline" if profile.profile_id == "P0" else "bidirectional_netem",
-        "target_rtt_ms": profile.target_rtt_ms,
-        "one_way_delay_ms": profile.one_way_delay_ms,
-        "one_way_jitter_ms": profile.one_way_jitter_ms,
-        "one_way_loss_percent": profile.one_way_loss_percent,
+        "configured_added_rtt_ms": profile.configured_added_rtt_ms,
+        "per_direction_delay_ms": profile.one_way_delay_ms,
+        "per_direction_jitter_ms": profile.one_way_jitter_ms,
+        "per_direction_loss_percent": profile.one_way_loss_percent,
+        "approximate_end_to_end_loss_percent": round(
+            (1 - (1 - profile.one_way_loss_percent / 100) ** 2) * 100,
+            4,
+        ),
     }
 
 
