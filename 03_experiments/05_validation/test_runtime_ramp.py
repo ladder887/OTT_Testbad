@@ -22,6 +22,26 @@ RAMP = load_module("test_runtime_ramp_module", "run_concurrency_ramp.py")
 
 
 class RuntimeSamplerTest(unittest.TestCase):
+    def test_remote_probe_excludes_the_docker_exec_wrapper(self):
+        self.assertIn("not line.lstrip().startswith('docker exec ')", SAMPLER.REMOTE_SAMPLE)
+
+    def test_baseline_reset_keeps_document_deduplication(self):
+        sampler = SAMPLER.RuntimeSampler(
+            ssh_user="ottadmin",
+            ssh_key=Path("unused"),
+        )
+        sampler.seen_es_documents.add("index:document")
+        sampler.all_ingest_lag_ms.extend([10.0, 20.0])
+        sampler.all_graph_lag_ms.append(30.0)
+        sampler.event_query_truncated = True
+
+        sampler.reset_measurement_accumulators()
+
+        self.assertEqual(sampler.seen_es_documents, {"index:document"})
+        self.assertEqual(sampler.all_ingest_lag_ms, [])
+        self.assertEqual(sampler.all_graph_lag_ms, [])
+        self.assertFalse(sampler.event_query_truncated)
+
     def test_percentiles_and_counter_rates(self):
         self.assertEqual(SAMPLER.percentile_summary([1, 2, 3, 4])["p50"], 2.5)
         previous = {

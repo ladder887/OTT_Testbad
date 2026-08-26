@@ -220,13 +220,14 @@ def stage_summary(
         ),
         3,
     )
+    measured_samples = [item for item in samples if item.get("phase") != "baseline"]
     edge_documents = sum(
         int(item.get("elasticsearch", {}).get("edge_document_count") or 0)
-        for item in samples
+        for item in measured_samples
     )
     status_4xx = sum(
         int(item.get("elasticsearch", {}).get("status_4xx_count") or 0)
-        for item in samples
+        for item in measured_samples
     )
     http_failures = sum(int(item.get("http_failure_count") or 0) for item in results)
     http_retries = sum(int(item.get("http_retry_count") or 0) for item in results)
@@ -409,6 +410,7 @@ def run_stage(
         return sample
 
     take_sample("baseline", {"target": target, "submitted": 0, "completed": 0, "failed": 0})
+    sampler.reset_measurement_accumulators()
     executor = scenario.RemoteExecutor(args.ssh_user, args.ssh_key, args.remote_timeout_sec)
     results_by_client: dict[str, dict[str, Any]] = {}
     errors_by_client: dict[str, str] = {}

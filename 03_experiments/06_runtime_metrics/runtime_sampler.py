@@ -89,6 +89,7 @@ if ps_rc == 0:
     active_playbacks = sum(
         1 for line in process_lines.splitlines()
         if 'python /app/client_agent.py run-spec' in line
+        and not line.lstrip().startswith('docker exec ')
     )
 
 docker_rc, docker_ids = command(['docker', 'ps', '--quiet'])
@@ -318,6 +319,7 @@ class RuntimeSampler:
         neo4j_password: str = "ottlab1234",
         api_timeout_sec: float = 20.0,
         max_events_per_sample: int = 20000,
+        event_overlap_sec: float = 180.0,
     ) -> None:
         self.ssh_user = ssh_user
         self.ssh_key = ssh_key.expanduser().resolve()
@@ -326,6 +328,7 @@ class RuntimeSampler:
         self.neo4j_http = neo4j_http.rstrip("/")
         self.api_timeout_sec = api_timeout_sec
         self.max_events_per_sample = max_events_per_sample
+        self.event_overlap_sec = max(0.0, event_overlap_sec)
         token = base64.b64encode(f"{neo4j_user}:{neo4j_password}".encode("utf-8")).decode("ascii")
         self.neo4j_authorization = f"Basic {token}"
         self.previous_nodes: dict[str, dict[str, Any]] = {}
@@ -370,7 +373,7 @@ class RuntimeSampler:
         return samples, errors
 
     def _query_elasticsearch(self, since: datetime, until: datetime) -> dict[str, Any]:
-        overlap_since = since - timedelta(seconds=2)
+        overlap_since = since - timedelta(seconds=self.event_overlap_sec)
         payload = {
             "size": self.max_events_per_sample,
             "track_total_hits": True,
@@ -449,6 +452,7 @@ class RuntimeSampler:
         cache_denominator = cache_statuses.get("HIT", 0) + cache_statuses.get("MISS", 0)
         return {
             "query_latency_ms": latency_ms,
+            "query_overlap_sec": self.event_overlap_sec,
             "query_total_hits_with_overlap": total_value,
             "new_document_count": edge_count + api_count,
             "edge_document_count": edge_count,
@@ -569,6 +573,12 @@ class RuntimeSampler:
         }
         self.previous_sample_at = sampled_at
         return sample
+
+    def reset_measurement_accumulators(self) -> None:
+        """Keep overlap de-duplication state while excluding baseline latency values."""
+        self.all_ingest_lag_ms.clear()
+        self.all_graph_lag_ms.clear()
+        self.event_query_truncated = False
 
     def query_token_coverage(self, token_ids: list[str]) -> dict[str, Any]:
         unique_ids = sorted(set(token_ids))
