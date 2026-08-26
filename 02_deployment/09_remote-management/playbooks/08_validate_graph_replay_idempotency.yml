@@ -1,0 +1,157 @@
+---
+- name: Confirm the replay-idempotency validation scope
+  hosts: analysis_storage:graph_processing
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Require explicit confirmation and both graph hosts
+      ansible.builtin.assert:
+        that:
+          - validate_graph_replay_idempotency | default(false) | bool
+          - (groups['analysis_storage'] | difference(ansible_play_hosts_all) | length) == 0
+          - (groups['graph_processing'] | difference(ansible_play_hosts_all) | length) == 0
+        fail_msg: >-
+          This intentionally replays every retained Elasticsearch event into
+          the existing Neo4j graph. Run without --limit and pass
+          -e validate_graph_replay_idempotency=true.
+      run_once: true
+
+- name: Capture the baseline graph state on the Control node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repository_root: "{{ playbook_dir }}/../../.."
+    snapshot_id: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+    baseline_path: "{{ repository_root }}/06_outputs/01_data_quality/graph_replay_{{ snapshot_id }}_before.json"
+
+  tasks:
+    - name: Snapshot consistent graph aggregates before replay
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ repository_root }}/03_experiments/05_validation/snapshot_graph_state.py"
+          - --output
+          - "{{ baseline_path }}"
+      register: baseline_snapshot
+      changed_when: false
+
+    - name: Publish the baseline path
+      ansible.builtin.set_fact:
+        graph_replay_baseline_path: "{{ baseline_path }}"
+        graph_replay_snapshot_id: "{{ snapshot_id }}"
+
+- name: Read the retained Elasticsearch boundary
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Read experiment document count and latest timestamp
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*/_search?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all"
+        method: POST
+        body_format: json
+        body:
+          size: 0
+          track_total_hits: true
+          aggs:
+            latest_event:
+              max:
+                field: "@timestamp"
+                format: strict_date_time
+        status_code: 200
+        return_content: true
+      register: retained_events
+
+    - name: Require retained source events
+      ansible.builtin.assert:
+        that:
+          - (retained_events.json.hits.total.value | int) > 0
+          - retained_events.json.aggregations.latest_event.value_as_string | default('') | length > 0
+        fail_msg: Elasticsearch contains no events to replay.
+
+    - name: Publish the replay boundary
+      ansible.builtin.set_fact:
+        replay_latest_timestamp: "{{ retained_events.json.aggregations.latest_event.value_as_string }}"
+
+- name: Replay every retained event without clearing Neo4j
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+  vars:
+    storage_host: "{{ groups['analysis_storage'][0] }}"
+    replay_latest_timestamp: "{{ hostvars[storage_host].replay_latest_timestamp }}"
+
+  tasks:
+    - name: Stop Graph Pipeline
+      ansible.builtin.command:
+        argv: [docker, compose, stop, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Remove the persisted Elasticsearch cursor
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - run
+          - --rm
+          - --no-deps
+          - --entrypoint
+          - /bin/sh
+          - graph-pipeline
+          - -c
+          - rm -f /var/lib/graph-pipeline/checkpoint.json
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Start Graph Pipeline with an empty checkpoint
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Wait until replay reaches the Elasticsearch boundary
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec ott-graph-pipeline-central
+          grep -F '"es_last_timestamp": "{{ replay_latest_timestamp }}"'
+          /var/lib/graph-pipeline/checkpoint.json
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      register: replay_checkpoint
+      changed_when: false
+      retries: 120
+      delay: 5
+      until: replay_checkpoint.rc == 0
+
+- name: Compare graph state after replay on the Control node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repository_root: "{{ playbook_dir }}/../../.."
+    baseline_path: "{{ hostvars['localhost'].graph_replay_baseline_path }}"
+    snapshot_id: "{{ hostvars['localhost'].graph_replay_snapshot_id }}"
+    after_path: "{{ repository_root }}/06_outputs/01_data_quality/graph_replay_{{ snapshot_id }}_after.json"
+
+  tasks:
+    - name: Require an identical graph fingerprint and consistent aggregates
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ repository_root }}/03_experiments/05_validation/snapshot_graph_state.py"
+          - --output
+          - "{{ after_path }}"
+          - --compare
+          - "{{ baseline_path }}"
+      register: replay_comparison
+      changed_when: false
+
+    - name: Report replay-idempotency artifacts
+      ansible.builtin.debug:
+        msg:
+          baseline: "{{ baseline_path }}"
+          after_replay: "{{ after_path }}"
+          result: Graph state and stored aggregates are unchanged after a complete replay.
