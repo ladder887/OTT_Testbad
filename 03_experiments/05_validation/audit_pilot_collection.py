@@ -33,6 +33,14 @@ REQUIRED_MAIN_VARIANTS = {
     for scenario_id, variants in EXPECTED_VARIANTS.items()
     for variant in variants
 }
+REQUIRED_HARD_NEGATIVE_VARIANTS = {
+    ("N1", "catalog_preview"),
+    ("A2", "stealth"),
+    ("N6", "flash_crowd"),
+    ("A6", "low_rate"),
+    ("N7", "popular_channel"),
+    ("A7", "low_fanout"),
+}
 EXPECTED_PROFILES = {f"P{index}" for index in range(5)}
 EXPECTED_PROFILE_VALUES = {
     "P0": (0.0, 0.0),
@@ -114,6 +122,8 @@ def scenario_errors(manifest: dict[str, Any]) -> list[str]:
         content_count = int(parameters.get("content_count") or 0)
         if content_count < 2 or len(bindings) != content_count:
             errors.append("N1 catalog_preview requires at least two contents with separate tokens")
+        if len({str(item.get("content_id") or "") for item in bindings} - {""}) != content_count:
+            errors.append("N1 catalog_preview requires a different content for every preview token")
         if int(parameters.get("concurrency") or 0) != 1:
             errors.append("N1 catalog_preview must remain serial")
 
@@ -336,11 +346,20 @@ def audit(
         for scenario_id, variant in REQUIRED_MAIN_VARIANTS
         if variant_counts[f"{scenario_id}:{variant}"] == 0
     )
+    missing_hard_negative_variants = sorted(
+        f"{scenario_id}:{variant}"
+        for scenario_id, variant in REQUIRED_HARD_NEGATIVE_VARIANTS
+        if variant_counts[f"{scenario_id}:{variant}"] == 0
+    )
     missing_applied_profiles = sorted(EXPECTED_PROFILES - set(applied_profiles))
     if mode in {"scenario", "main"} and missing_scenarios:
         errors.append(f"required scenarios are missing: {missing_scenarios}")
     if mode == "main" and missing_main_variants:
         errors.append(f"required scenario variants are missing: {missing_main_variants}")
+    if mode == "hard-negative" and missing_hard_negative_variants:
+        errors.append(
+            f"required hard-negative pilot variants are missing: {missing_hard_negative_variants}"
+        )
     if mode in {"network", "main"}:
         if missing_applied_profiles:
             errors.append(f"network profiles were not actually applied: {missing_applied_profiles}")
@@ -372,6 +391,7 @@ def audit(
         "variant_counts": dict(sorted(variant_counts.items())),
         "missing_scenarios": missing_scenarios,
         "missing_main_variants": missing_main_variants,
+        "missing_hard_negative_variants": missing_hard_negative_variants,
         "coverage": {
             key: dict(sorted(counter.items()))
             for key, counter in coverage.items()
@@ -398,7 +418,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifests", nargs="+", required=True)
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
-    parser.add_argument("--mode", choices=("scenario", "network", "main"), default="scenario")
+    parser.add_argument(
+        "--mode",
+        choices=("scenario", "hard-negative", "network", "main"),
+        default="scenario",
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 

@@ -22,6 +22,114 @@ CACHE = load_module("validate_edge_cache_pair")
 
 
 class CollectionAuditTest(unittest.TestCase):
+    def test_hard_negative_gate_accepts_all_required_pairs(self):
+        client = {
+            "logical_client_id": "lc001",
+            "physical_host_id": "pi01",
+            "source_ip": "192.168.0.151",
+            "edge_id": "edge-kr",
+            "network_profile_id": "P0",
+        }
+        cases = [
+            ("N1", "catalog_preview", {"content_count": 2, "concurrency": 1}, 2, "video_01"),
+            (
+                "A2",
+                "stealth",
+                {"content_count": 2, "concurrency": 1, "download_variant": "stealth"},
+                2,
+                "video_02",
+            ),
+            (
+                "N6",
+                "flash_crowd",
+                {
+                    "consumer_count": 2,
+                    "shared_account": False,
+                    "shared_token": False,
+                    "shared_content": True,
+                    "actual_account_count": 2,
+                },
+                2,
+                "video_03",
+            ),
+            (
+                "A6",
+                "low_rate",
+                {"participant_count": 4, "actual_account_count": 4, "actual_token_count": 4},
+                4,
+                "video_04",
+            ),
+            (
+                "N7",
+                "popular_channel",
+                {"consumer_count": 2, "shared_token": False},
+                2,
+                "live_01",
+            ),
+            (
+                "A7",
+                "low_fanout",
+                {"consumer_count": 2, "shared_token": True},
+                1,
+                "live_02",
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = []
+            token_index = 0
+            for scenario_id, variant, scenario_parameters, binding_count, content_id in cases:
+                parameters = {
+                    "scenario_variant": variant,
+                    "selected_clients": [client],
+                    "client_results": [
+                        {
+                            "logical_client_id": "lc001",
+                            "role": "viewer",
+                            "traffic": {"rolling_playlist": True},
+                        }
+                    ],
+                    **scenario_parameters,
+                }
+                bindings = []
+                for binding_index in range(binding_count):
+                    token_index += 1
+                    binding_content_id = (
+                        f"video_{binding_index + 1:02d}"
+                        if scenario_id == "N1"
+                        else content_id
+                    )
+                    bindings.append(
+                        {
+                            "cdn_token_id": f"cdn_{token_index:024x}",
+                            "content_id": binding_content_id,
+                        }
+                    )
+                path = Path(temp_dir) / f"{scenario_id}_{variant}.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "run_id": f"run_{scenario_id}_{variant}",
+                            "dataset_prefix": "tnsm_100lc_20260826_hardneg_smoke",
+                            "scenario_id": scenario_id,
+                            "status": "completed",
+                            "parameters": parameters,
+                            "token_bindings": bindings,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                path.with_suffix(".validation.json").write_text(
+                    json.dumps({"passed": True}),
+                    encoding="utf-8",
+                )
+                paths.append(path)
+
+            report = COLLECTION.audit(paths, {"lc001": client}, "hard-negative")
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["missing_hard_negative_variants"], [])
+
     def test_hard_negative_relationships_are_accepted(self):
         flash_crowd = {
             "scenario_id": "N6",
