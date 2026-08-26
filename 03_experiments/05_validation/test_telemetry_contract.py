@@ -33,6 +33,7 @@ class TelemetryContractTest(unittest.TestCase):
             "token_jti": token_jti,
             "cdn_token_id": token_id,
             "token_playback_id": "playback-1",
+            "observed_device_id": "device_1111111111111111",
             "session_token": "-",
         }
         api = {
@@ -46,6 +47,7 @@ class TelemetryContractTest(unittest.TestCase):
             "token_playback_id": "playback-1",
             "token_owner_account_id": "1",
             "token_content_id": "video_01",
+            "observed_device_id": "device_1111111111111111",
         }
 
         edge_errors, edge_ids = VALIDATOR.validate_edge_documents([edge])
@@ -74,6 +76,7 @@ class TelemetryContractTest(unittest.TestCase):
             "token_playback_id": "playback-1",
             "token_owner_account_id": "1",
             "token_content_id": "video_01",
+            "observed_device_id": "device_1111111111111111",
         }
 
         errors, _ = VALIDATOR.validate_api_documents([api])

@@ -89,6 +89,7 @@ def validate_edge_documents(documents: list[dict]) -> tuple[list[str], set[str]]
         "token_jti",
         "cdn_token_id",
         "token_playback_id",
+        "observed_device_id",
     }
     for index, document in enumerate(hls_documents):
         missing = sorted(field for field in required if field not in document)
@@ -148,6 +149,7 @@ def validate_api_documents(documents: list[dict]) -> tuple[list[str], set[str]]:
         "token_playback_id",
         "token_owner_account_id",
         "token_content_id",
+        "observed_device_id",
     }
     token_ids = set()
     for index, document in enumerate(issued):

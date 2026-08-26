@@ -30,9 +30,15 @@ python 03_experiments/05_validation/validate_inventory.py `
 - Pi별 Docker Compose와 `ipvlan` 고정 IP 생성: 구현됨
 - inventory 정합성 검사: 구현됨
 - logical client image의 설정 출력/Edge health probe: 구현됨
-- N1~N7/A1~A7 traffic runner: 재구현 필요
-- A1/A6/A7 cross-container coordinator: 미구현
+- 로그인, browse, playback 발급, signed HLS VOD/LIVE 소비 agent: 구현됨
+- N1~N7 traffic runner: 구현됨
+- A1/A2/A3/A6/A7 traffic runner: 구현됨
+- A1/A6/A7 cross-container coordinator: 구현됨
+- A4: 3개 rendition 구축 전까지 실행 차단
+- A5: 주 ViewingSession 분류에서 제외
 - run manifest token binding schema/기록 도구: 구현됨
-- manifest와 ES/Neo4j request/session 대조 validator: 미구현
+- manifest와 ES/Neo4j request/session 대조 validator: 구현됨
+- ViewingSession F0/F1 dataset export와 Logistic/RF smoke: 구현됨
 
-미구현 항목을 완료하기 전에는 main collection을 시작하지 않는다.
+smoke 검증을 통과하기 전에는 main collection을 시작하지 않는다. smoke 데이터와 지표는
+pipeline 동작 확인용이며 논문 결과에 사용하지 않는다.

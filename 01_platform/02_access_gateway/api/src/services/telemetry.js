@@ -72,6 +72,7 @@ async function emitApiEvent(req, event) {
     token_owner_auth_session_id: event.sessionId ? String(event.sessionId) : '-',
     token_playback_id: event.playbackId || tokenPayload.pid || '-',
     token_owner_device_id: event.ownerDeviceId || tokenPayload.odv || '-',
+    observed_device_id: safeTag(req.get('x-device-id') || '', 64) || '-',
     token_content_id: event.contentId ? String(event.contentId) : '-',
     token_issued_at: issuedAt || '-',
     token_expires: expiresAt || '-',

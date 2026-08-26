@@ -39,3 +39,26 @@ export CLIENT_PARENT_INTERFACE=enp1s0
 
 `SOURCE_IP` 환경변수는 설정값일 뿐이다. 실제 source IP 분리는 `ipvlan` network가
 담당하며, 성공 여부는 각 Edge access log의 `client_ip`로 검증한다.
+
+## Scenario 실행
+
+`ott-control`에서 실행한다. runner는 inventory를 매번 다시 생성해 generator와 client
+배포의 ID/IP/device 값이 어긋나지 않게 한다.
+
+```bash
+cd ~/OTT_Testbad
+python3 03_experiments/03_orchestration/run_scenario.py \
+  --scenario N1 \
+  --smoke \
+  --seed 2026082601
+```
+
+지원 범위는 `N1~N7`, `A1`, `A2`, `A3`, `A6`, `A7`이다. 실행 후 출력되는
+`manifest_path`를 `validate_run_collection.py --manifest`에 그대로 넣는다.
+
+- N6는 2~4개 container가 같은 account로 각자 token을 발급한다.
+- A1/A7은 owner가 발급한 token URL을 실제 2~5개 consumer container에 전달한다.
+- A3는 한 container 안에서 2~4 worker thread가 실제 동시에 요청한다.
+- A6는 네 container와 네 account/token을 순서대로 교대한다.
+- A4는 현재 2개 rendition이라 거부한다.
+- A5는 주 ViewingSession task가 아니므로 거부한다.

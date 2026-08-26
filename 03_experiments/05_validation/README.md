@@ -17,14 +17,14 @@
 - Nginx 초 단위 응답시간을 millisecond로 정규화
 - 4xx/5xx HLS 요청도 raw graph에 보존
 - run manifest token binding의 중복 방지와 원자적 저장
+- manifest consumer와 Edge `client_ip` 실제 대조
+- opaque `X-Device-ID`의 Edge/API/Graph 보존
+- manifest token과 Elasticsearch API/HLS event 결합
+- manifest token과 Neo4j ViewingSession/IP/Device 결합
+- raw Elasticsearch/Neo4j provenance leakage 차단
 
-추가 구현이 필요한 validator:
-
-- Edge log의 실제 `client_ip` 대조
-- run manifest의 예상/관측 request 수와 token binding 대조
-- Elasticsearch duplicate/missing event 검사
-- Neo4j replay idempotency 검사
-- split leakage 검사
+추가 구현이 필요한 journal gate는 Neo4j replay idempotency 반복 시험, 대규모 duplicate/
+missing event 검사, 최종 split leakage 검사다.
 
 ## 배포 후 telemetry 검사
 
@@ -43,3 +43,16 @@ python3 03_experiments/05_validation/validate_telemetry_contract.py \
 재생 traffic이 없으면 `no HLS Edge event`와 `no token_issued API event`가 출력되는 것이
 정상이다. 이 경우 validator를 통과한 것이 아니므로 반드시 새 코드 배포 후 실제 재생을
 만들고 다시 검사한다.
+
+## Run 단위 검사
+
+scenario가 출력한 manifest 하나를 검사한다.
+
+```bash
+python3 03_experiments/05_validation/validate_run_collection.py \
+  --manifest 06_outputs/01_run_manifests/RUN_ID.json \
+  --wait-sec 120
+```
+
+Graph Pipeline 반영을 최대 120초 기다린다. `passed: true`가 아니면 해당 run을 dataset에
+넣지 않는다. A1/A7은 실제 HLS source IP와 device가 각각 2개 이상인지 추가로 검사한다.

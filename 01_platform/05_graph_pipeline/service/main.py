@@ -696,6 +696,7 @@ class GraphPipeline:
                 "playback_session_id": playback_session_id if playback_session_id else "-",
                 "owner_auth_session_id": owner_auth_session_id,
                 "owner_device_id": owner_device_id,
+                "observed_device_id": log.get("observed_device_id", "-"),
                 "token_content_id": log.get("token_content_id", "-"),
                 "token_issued_at": log.get("token_issued_at", "-"),
                 "token_expires": log.get("token_expires", "-"),
@@ -1004,7 +1005,9 @@ class GraphPipeline:
                 request_seed = request_log_id if request_log_id and request_log_id != "-" else f"{edge_id}|{timestamp}|{log.get('connection_id', '-')}|{client_ip}|{content_path}"
                 request_id = "req_" + hashlib.sha256(request_seed.encode("utf-8")).hexdigest()[:24]
                 cdn_token_id = log.get("cdn_token_id", "")
-                observed_device_id = self._device_id_from_user_agent(log.get("user_agent", "-"))
+                observed_device_id = str(log.get("observed_device_id") or "").strip()
+                if not observed_device_id or observed_device_id == "-":
+                    observed_device_id = self._device_id_from_user_agent(log.get("user_agent", "-"))
                 content_type = self._infer_content_type(request_content_id, request_path)
                 viewing_session_key = self._build_viewing_session_key(
                     account_id,

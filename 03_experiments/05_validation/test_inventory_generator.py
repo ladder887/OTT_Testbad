@@ -29,6 +29,8 @@ class InventoryGeneratorTest(unittest.TestCase):
         self.assertEqual(clients[-1].source_ip, "192.168.0.250")
         self.assertEqual(clients[0].physical_host_id, "pi01")
         self.assertEqual(clients[-1].physical_host_id, "pi10")
+        self.assertNotIn("lc001", clients[0].device_id)
+        self.assertEqual(len({client.device_id for client in clients}), 100)
 
     def test_generated_files_cover_all_hosts(self) -> None:
         clients = GENERATOR.build_inventory()

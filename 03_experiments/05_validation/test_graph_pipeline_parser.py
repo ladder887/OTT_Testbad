@@ -204,6 +204,21 @@ class GraphPipelineParserTest(unittest.TestCase):
 
         self.assertNotEqual(first, second)
 
+    def test_explicit_observed_device_is_preserved(self):
+        parsed = self.pipeline.parse_nginx_log(
+            {
+                "event_time_epoch": "1787065200.123",
+                "client_ip": "192.168.0.151",
+                "request_uri": "/hls/video_01/720p/seg_00001.ts",
+                "request_method": "GET",
+                "observed_device_id": "device_1111111111111111",
+                "http_user_agent": "Mozilla/5.0 Chrome/126.0 Safari/537.36",
+                "status": 200,
+            }
+        )
+
+        self.assertEqual(parsed["observed_device_id"], "device_1111111111111111")
+
     def test_browse_and_playback_share_consumer_content_session_key(self):
         browse_key = GraphPipeline._build_viewing_session_key(
             "user_7",

@@ -698,7 +698,138 @@ DB, LIVE, container, endpoint 전체 상태를 검사한다. 둘은 검사 범�
 
 이 playbook은 정상/공격 시청 traffic과 model 학습을 실행하지 않는다.
 
-## 15. logical client만 정지
+## 15. 새 수집 계약 반영
+
+scenario runner는 각 요청에 opaque device ID를 보내며 Edge/API/Graph Pipeline이 이를
+`observed_device_id`로 저장한다. 최신 commit을 동기화한 뒤 Origin API, 네 Edge,
+Graph Processing, Client image를 함께 갱신해야 한다.
+
+```bash
+cd ~/OTT_Testbad/02_deployment/09_remote-management
+
+bash scripts/run.sh playbooks/01_sync_repository.yml \
+  -e "deployment_revision=$(cd ~/OTT_Testbad && git rev-parse HEAD)"
+
+bash scripts/run.sh playbooks/02_deploy_platform.yml \
+  --limit 'ott-origin:edge_nodes:ott-processing'
+
+bash scripts/run.sh playbooks/03_deploy_clients.yml
+```
+
+세 명령이 끝나면 Pi마다 container 10개가 새 opaque device ID를 가진다. 이전에 생성한
+`03_experiments/07_generated` 파일은 generator가 덮어쓴다.
+
+전체 probe와 verify를 실행하면 검사 traffic이 생긴다.
+
+```bash
+bash scripts/run.sh playbooks/05_probe_clients.yml
+bash scripts/run.sh playbooks/04_verify.yml
+```
+
+모두 통과한 뒤 smoke 수집 전 다시 깨끗하게 비운다.
+
+```bash
+bash scripts/run.sh playbooks/06_reset_collected_data.yml \
+  -e reset_collected_data=true
+```
+
+## 16. 정상/공격 smoke 수집
+
+smoke는 통신, token binding, LIVE rolling, ES/Neo4j 결합, dataset export가 이어지는지만
+검사한다. segment 수와 시간이 축소되어 있으므로 논문 학습 데이터로 사용하지 않는다.
+
+먼저 정상 N1 한 건을 실행한다.
+
+```bash
+cd ~/OTT_Testbad
+python3 03_experiments/03_orchestration/run_scenario.py \
+  --scenario N1 \
+  --smoke \
+  --seed 2026082601
+```
+
+출력 예시의 `manifest_path`를 다음 명령에 넣는다.
+
+```bash
+python3 03_experiments/05_validation/validate_run_collection.py \
+  --manifest 06_outputs/01_run_manifests/출력된_RUN_ID.json \
+  --wait-sec 120
+```
+
+`passed: true`를 확인한 뒤 A1을 실행한다. A1은 owner 한 개가 발급한 VOD token을 서로
+다른 두 consumer container가 실제로 공유한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_scenario.py \
+  --scenario A1 \
+  --smoke \
+  --seed 2026082611
+```
+
+새 A1 manifest도 같은 validator로 검사한다. A1 결과에서 다음이 모두 보여야 한다.
+
+- `expected_consumer_count: 2`
+- 서로 다른 `edge_ips` 두 개
+- `neo4j_device_count` 2 이상
+- `errors: []`
+- `passed: true`
+
+학습 smoke에 필요한 최소 sample을 만들 때만 N1 네 건과 A1 두 건을 추가 실행한다.
+
+```bash
+for seed in 2026082602 2026082603 2026082604; do
+  python3 03_experiments/03_orchestration/run_scenario.py \
+    --scenario N1 --smoke --seed "${seed}"
+done
+
+python3 03_experiments/03_orchestration/run_scenario.py \
+  --scenario A1 --smoke --seed 2026082612
+```
+
+각 manifest를 validator로 통과시키지 못하면 dataset export로 넘어가지 않는다.
+
+## 17. dataset과 학습 smoke
+
+완료된 manifest와 Neo4j를 `cdn_token_id`로 결합한다.
+
+```bash
+cd ~/OTT_Testbad
+python3 03_experiments/04_data_tools/export_session_dataset.py \
+  --manifests 06_outputs/01_run_manifests
+```
+
+정상/공격 row가 각각 2개 이상인지 출력에서 확인한다. control node에 작은 전용 Python
+환경을 한 번 만든다.
+
+```bash
+python3 -m venv .venv-training
+.venv-training/bin/pip install -r \
+  03_experiments/04_data_tools/requirements-training-smoke.txt
+```
+
+Logistic Regression과 Random Forest fitting/metric 계산을 확인한다.
+
+```bash
+.venv-training/bin/python \
+  03_experiments/04_data_tools/train_session_smoke.py
+```
+
+report의 `evaluation_scope`는 `pipeline_smoke_only_not_a_research_result`다. 여기 나온
+정확도나 AUC는 논문 결과가 아니다. 최종 연구 평가는 main collection 이후
+account/device/host/content/time holdout으로 별도 수행한다.
+
+smoke를 모두 확인한 뒤 정식 수집을 시작하기 전에 다시 초기화한다.
+
+```bash
+cd ~/OTT_Testbad/02_deployment/09_remote-management
+bash scripts/run.sh playbooks/06_reset_collected_data.yml \
+  -e reset_collected_data=true
+```
+
+`06_outputs`의 smoke manifest/dataset/report는 삭제하지 않아도 된다. main collection에서
+`collection_mode=smoke` 또는 `timing_scaled=true`인 manifest를 입력하지 않으면 된다.
+
+## 18. logical client만 정지
 
 ```bash
 bash scripts/run.sh playbooks/90_stop_clients.yml
@@ -706,7 +837,7 @@ bash scripts/run.sh playbooks/90_stop_clients.yml
 
 Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin media는 유지한다.
 
-## 16. 파일별 역할
+## 19. 파일별 역할
 
 | 파일 | 역할 |
 |---|---|
@@ -723,8 +854,12 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | `playbooks/05_probe_clients.yml` | 100개 logical client의 Edge 통신 검증 |
 | `playbooks/06_reset_collected_data.yml` | 정식 수집 전 Elasticsearch, Neo4j, Graph Pipeline checkpoint 초기화 |
 | `playbooks/90_stop_clients.yml` | logical client 정지 |
+| `03_experiments/03_orchestration/run_scenario.py` | 여러 Pi/container의 정상·공격 scenario 조정과 manifest 기록 |
+| `03_experiments/05_validation/validate_run_collection.py` | manifest와 ES/Neo4j 수집 결과 대조 |
+| `03_experiments/04_data_tools/export_session_dataset.py` | token binding 기반 ViewingSession dataset 생성 |
+| `03_experiments/04_data_tools/train_session_smoke.py` | Logistic/RF 최소 fitting 경로 검사 |
 
-## 17. 자주 발생하는 오류
+## 20. 자주 발생하는 오류
 
 | 메시지 | 처리 |
 |---|---|

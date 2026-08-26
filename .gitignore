@@ -12,6 +12,7 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 .venv/
+.venv-training/
 venv/
 env/
 .tox/

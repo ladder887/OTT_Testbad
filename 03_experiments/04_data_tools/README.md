@@ -61,3 +61,30 @@ python 03_experiments/04_data_tools/inventory_hls.py \
 - `ENDLIST` 여부와 LIVE/VOD 구분
 
 media가 없거나 참조 segment가 빠지면 exit code 1을 반환한다.
+
+## ViewingSession dataset export
+
+완료된 run manifest의 `cdn_token_id`와 Neo4j `CdnToken`을 결합한다. HLS segment가 하나도
+없는 token owner용 control-plane session은 주 ViewingSession dataset에서 제외한다.
+
+```bash
+python3 03_experiments/04_data_tools/export_session_dataset.py \
+  --manifests 06_outputs/01_run_manifests
+```
+
+결과는 `06_outputs/02_datasets/session_features.csv`와 SHA-256/schema metadata다.
+scenario, label, run, client/host, raw ID는 metadata column에만 남고 모델 feature
+allowlist에는 들어가지 않는다.
+
+최소 fitting 경로만 확인하려면 다음을 실행한다.
+
+```bash
+python3 -m venv .venv-training
+.venv-training/bin/pip install -r \
+  03_experiments/04_data_tools/requirements-training-smoke.txt
+.venv-training/bin/python \
+  03_experiments/04_data_tools/train_session_smoke.py
+```
+
+이 결과는 stratified smoke check다. journal 평가에 필요한 host/content/time/account split을
+대체하지 않으며 논문 수치로 사용하지 않는다.

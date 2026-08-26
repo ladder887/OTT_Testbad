@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import ipaddress
 import json
 from dataclasses import asdict, dataclass
@@ -39,6 +40,11 @@ RESERVED_IPS = {
 }
 
 
+def opaque_device_id(index: int) -> str:
+    digest = hashlib.sha256(f"ott-device-{index:03d}".encode("ascii")).hexdigest()
+    return f"device_{digest[:16]}"
+
+
 @dataclass(frozen=True)
 class LogicalClient:
     logical_client_index: int
@@ -72,7 +78,7 @@ def build_inventory() -> list[LogicalClient]:
                 source_ip=f"192.168.0.{LOGICAL_CLIENT_START + index - 1}",
                 account_key=f"user{index}",
                 account_email=f"user{index}@test.com",
-                device_id=f"dev-lc{index:03d}",
+                device_id=opaque_device_id(index),
                 edge_id=edge_id,
                 edge_base_url=edge_base_url,
                 network_profile_id=NETWORK_PROFILES[(index - 1) % len(NETWORK_PROFILES)],

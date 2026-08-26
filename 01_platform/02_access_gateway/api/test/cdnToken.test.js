@@ -110,6 +110,7 @@ test('API telemetry omits experiment provenance and raw token query data', async
       const headers = {
         'x-real-ip': '192.168.0.151',
         'x-edge-id': 'edge-kr',
+        'x-device-id': 'device_1111111111111111',
         'user-agent': 'OTT-Test/1.0',
       }
       return headers[name.toLowerCase()]
@@ -132,6 +133,7 @@ test('API telemetry omits experiment provenance and raw token query data', async
   assert.equal(indexedDocument.query_string, '-')
   assert.equal(indexedDocument.token_jti, issued.payload.jti)
   assert.equal(indexedDocument.token_playback_id, 'playback-1')
+  assert.equal(indexedDocument.observed_device_id, 'device_1111111111111111')
   for (const forbidden of [
     'token_label',
     'token_run_id',
