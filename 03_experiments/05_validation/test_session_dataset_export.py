@@ -42,6 +42,8 @@ class SessionDatasetExportTest(unittest.TestCase):
                     "viewing_session_id": "vs_1",
                     "client_ip": "192.168.0.151",
                     "observed_device_id": "device_a",
+                    "account_id": "account_a",
+                    "edge_id": "edge-kr",
                     "content_id": "video_01",
                     "content_type": "vod",
                     "start_time": "2026-08-26T00:00:00Z",
@@ -61,6 +63,8 @@ class SessionDatasetExportTest(unittest.TestCase):
                         "path": "/hls/video_01/720p/seg_00001.ts",
                         "status": 200,
                         "bytes": 1000,
+                        "response_time_ms": 20,
+                        "cache_status": "MISS",
                     },
                     {
                         "timestamp": "2026-08-26T00:00:06Z",
@@ -68,6 +72,8 @@ class SessionDatasetExportTest(unittest.TestCase):
                         "path": "/hls/video_01/720p/seg_00002.ts",
                         "status": 200,
                         "bytes": 1000,
+                        "response_time_ms": 10,
+                        "cache_status": "HIT",
                     },
                     {
                         "timestamp": "2026-08-26T00:00:12Z",
@@ -75,6 +81,8 @@ class SessionDatasetExportTest(unittest.TestCase):
                         "path": "/hls/video_01/1080p/seg_00003.ts",
                         "status": 200,
                         "bytes": 2000,
+                        "response_time_ms": 30,
+                        "cache_status": "HIT",
                     },
                 ],
             }
@@ -88,7 +96,12 @@ class SessionDatasetExportTest(unittest.TestCase):
             }
         }
         clients = {
-            "192.168.0.151": {"logical_client_id": "lc001", "physical_host_id": "pi01"}
+            "192.168.0.151": {
+                "logical_client_id": "lc001",
+                "physical_host_id": "pi01",
+                "edge_id": "edge-kr",
+                "network_profile_id": "P0",
+            }
         }
 
         rows = EXPORTER.build_rows(graph_rows, labels, clients)
@@ -100,6 +113,74 @@ class SessionDatasetExportTest(unittest.TestCase):
         self.assertEqual(rows[0]["rendition_switch_count"], 1)
         self.assertEqual(rows[0]["segment_index_gap_count"], 0)
         self.assertEqual(rows[0]["token_unique_ips"], 1)
+        self.assertEqual(rows[0]["account_session_count_10m"], 1)
+        self.assertEqual(rows[0]["content_unique_segments_10m"], 3)
+        self.assertAlmostEqual(rows[0]["response_time_avg_ms"], 20.0)
+        self.assertAlmostEqual(rows[0]["cache_hit_ratio"], 2 / 3, places=6)
+        self.assertEqual(rows[0]["network_profile_id"], "P0")
+
+    def test_time_window_features_join_account_and_content_sessions(self):
+        labels = {}
+        graph_rows = []
+        clients = {}
+        for index, (token_id, account_id, client_ip, start_index, content_id) in enumerate(
+            [
+                ("cdn_a", "account_a", "192.168.0.151", 0, "video_01"),
+                ("cdn_b", "account_a", "192.168.0.152", 10, "video_02"),
+                ("cdn_c", "account_b", "192.168.0.153", 2, "video_01"),
+            ]
+        ):
+            labels[token_id] = {
+                "run_id": f"run_{index}",
+                "scenario_id": "N1",
+                "attack_family": "",
+                "label_binary": 0,
+            }
+            clients[client_ip] = {
+                "logical_client_id": f"lc{index + 1:03d}",
+                "physical_host_id": "pi01",
+                "edge_id": "edge-kr",
+                "network_profile_id": "P0",
+            }
+            graph_rows.append(
+                {
+                    "cdn_token_id": token_id,
+                    "session": {
+                        "viewing_session_id": f"vs_{index}",
+                        "client_ip": client_ip,
+                        "observed_device_id": f"device_{index}",
+                        "account_id": account_id,
+                        "content_id": content_id,
+                        "content_type": "vod",
+                        "start_time": f"2026-08-26T00:0{index}:00Z",
+                        "end_time": f"2026-08-26T00:0{index}:06Z",
+                    },
+                    "requests": [
+                        {
+                            "timestamp": f"2026-08-26T00:0{index}:00Z",
+                            "kind": "hls_segment",
+                            "path": f"/hls/{content_id}/720p/seg_{start_index:05d}.ts",
+                            "status": 200,
+                            "bytes": 1000,
+                        },
+                        {
+                            "timestamp": f"2026-08-26T00:0{index}:06Z",
+                            "kind": "hls_segment",
+                            "path": f"/hls/{content_id}/720p/seg_{start_index + 1:05d}.ts",
+                            "status": 200,
+                            "bytes": 1000,
+                        },
+                    ],
+                }
+            )
+
+        rows = EXPORTER.build_rows(graph_rows, labels, clients)
+        by_session = {row["viewing_session_id"]: row for row in rows}
+
+        self.assertEqual(by_session["vs_1"]["account_session_count_10m"], 2)
+        self.assertEqual(by_session["vs_1"]["account_unique_contents_10m"], 2)
+        self.assertEqual(by_session["vs_2"]["content_session_count_10m"], 2)
+        self.assertEqual(by_session["vs_2"]["content_unique_accounts_10m"], 2)
 
     def test_control_plane_only_session_is_not_exported(self):
         rows = EXPORTER.build_rows(

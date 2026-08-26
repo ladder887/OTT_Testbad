@@ -23,8 +23,8 @@
 - manifest token과 Neo4j ViewingSession/IP/Device 결합
 - raw Elasticsearch/Neo4j provenance leakage 차단
 
-추가 구현이 필요한 journal gate는 Neo4j replay idempotency 반복 시험, 대규모 duplicate/
-missing event 검사, 최종 split leakage 검사다.
+추가 구현이 필요한 journal gate는 대규모 duplicate/missing event 검사와 최종 split
+leakage 검사다. Neo4j replay idempotency는 전용 rebuild/replay playbook으로 검사한다.
 
 ## 배포 후 telemetry 검사
 
@@ -57,3 +57,29 @@ python3 03_experiments/05_validation/validate_run_collection.py \
 Graph Pipeline 반영을 최대 120초 기다린다. 각 예상 consumer IP에 segment request가
 연결되고 `passed: true`가 된 run만 dataset에 넣는다. A1/A7은 실제 HLS source IP와
 device가 각각 2개 이상인지 추가로 검사한다.
+
+## 파일럿 묶음 감사
+
+시나리오 구현과 수집 결합을 검사한다.
+
+```bash
+python3 03_experiments/05_validation/audit_pilot_collection.py \
+  --manifests 06_outputs/01_run_manifests/pilot_YYYYMMDD \
+  --mode scenario \
+  --output 06_outputs/01_data_quality/pilot_scenario_audit.json
+```
+
+P0~P4가 실제 적용된 별도 network pilot은 `--mode network`로 검사한다. `main` mode는
+모든 시나리오, 실제 network 적용, 4개 Edge와 최소 5개 host coverage를 함께 요구한다.
+
+## Dataset label-proxy 감사
+
+```bash
+python3 03_experiments/05_validation/audit_session_dataset.py \
+  --dataset 06_outputs/02_datasets/session_features.csv \
+  --output 06_outputs/01_data_quality/session_dataset_audit.json
+```
+
+금지 field, 중복 sample/token, class-exclusive Edge/profile/content type, 상수 특징과
+단일 특징 ROC-AUC를 보고한다. 높은 단일 특징 AUC는 자동 삭제 사유가 아니라 workload
+generator artifact인지 실제 공격 신호인지 확인해야 한다는 경고다.

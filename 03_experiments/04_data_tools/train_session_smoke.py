@@ -15,7 +15,7 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET = REPOSITORY_ROOT / "06_outputs" / "02_datasets" / "session_features.csv"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "06_outputs" / "03_training_smoke" / "report.json"
-FEATURE_COLUMNS = (
+F0_F1_FEATURE_COLUMNS = (
     "request_count",
     "manifest_request_count",
     "segment_bytes_total",
@@ -30,6 +30,7 @@ FEATURE_COLUMNS = (
     "token_unique_devices",
     "token_concurrent_consumers_max",
 )
+FEATURE_COLUMNS = F0_F1_FEATURE_COLUMNS
 FORBIDDEN_FIELDS = {
     "scenario_id",
     "attack_family",
@@ -49,22 +50,46 @@ class SmokeTrainingError(RuntimeError):
     """Raised when the smoke training contract is not satisfied."""
 
 
-def load_dataset(path: Path) -> tuple[list[list[float]], list[int], list[dict[str, str]]]:
+def resolve_feature_columns(path: Path, feature_set: str) -> tuple[str, ...]:
+    if feature_set == "f0-f1":
+        return F0_F1_FEATURE_COLUMNS
+    metadata_path = path.with_suffix(".metadata.json")
+    if not metadata_path.exists():
+        raise SmokeTrainingError(
+            f"all feature smoke requires exporter metadata: {metadata_path}"
+        )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SmokeTrainingError(f"cannot read dataset metadata: {exc}") from exc
+    columns = tuple(str(item) for item in metadata.get("feature_columns", []))
+    if not columns:
+        raise SmokeTrainingError("dataset metadata contains no feature_columns")
+    leaked = sorted(set(columns).intersection(FORBIDDEN_FIELDS))
+    if leaked:
+        raise SmokeTrainingError(f"exporter metadata contains forbidden model fields: {leaked}")
+    return columns
+
+
+def load_dataset(
+    path: Path,
+    feature_columns: tuple[str, ...] = F0_F1_FEATURE_COLUMNS,
+) -> tuple[list[list[float]], list[int], list[dict[str, str]]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise SmokeTrainingError("dataset is empty")
-    missing = [feature for feature in FEATURE_COLUMNS if feature not in rows[0]]
+    missing = [feature for feature in feature_columns if feature not in rows[0]]
     if missing:
         raise SmokeTrainingError(f"dataset is missing feature columns: {missing}")
-    leaked = sorted(set(FEATURE_COLUMNS).intersection(FORBIDDEN_FIELDS))
+    leaked = sorted(set(feature_columns).intersection(FORBIDDEN_FIELDS))
     if leaked:
         raise SmokeTrainingError(f"feature allowlist contains forbidden fields: {leaked}")
     features: list[list[float]] = []
     labels: list[int] = []
     for index, row in enumerate(rows):
         try:
-            features.append([float(row[feature]) for feature in FEATURE_COLUMNS])
+            features.append([float(row[feature]) for feature in feature_columns])
             labels.append(int(row["label_binary"]))
         except (KeyError, TypeError, ValueError) as exc:
             raise SmokeTrainingError(f"invalid numeric value in dataset row {index + 2}: {exc}") from exc
@@ -156,13 +181,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--seed", type=int, default=20260826)
+    parser.add_argument(
+        "--feature-set",
+        choices=("f0-f1", "all"),
+        default="f0-f1",
+        help="use the stable F0/F1 smoke subset or every exporter-declared feature",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        features, labels, rows = load_dataset(args.dataset.resolve())
+        dataset_path = args.dataset.resolve()
+        feature_columns = resolve_feature_columns(dataset_path, args.feature_set)
+        features, labels, rows = load_dataset(dataset_path, feature_columns)
         training = run_training(features, labels, args.seed)
     except (SmokeTrainingError, OSError) as exc:
         print(f"training smoke failed: {exc}", file=sys.stderr)
@@ -172,7 +205,8 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "dataset_path": str(args.dataset.resolve()),
         "row_count": len(rows),
-        "feature_columns": list(FEATURE_COLUMNS),
+        "feature_set": args.feature_set,
+        "feature_columns": list(feature_columns),
         "seed": args.seed,
         **training,
         "limitations": [

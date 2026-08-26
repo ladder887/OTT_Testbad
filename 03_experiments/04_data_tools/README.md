@@ -73,8 +73,18 @@ python3 03_experiments/04_data_tools/export_session_dataset.py \
 ```
 
 결과는 `06_outputs/02_datasets/session_features.csv`와 SHA-256/schema metadata다.
-scenario, label, run, client/host, raw ID는 metadata column에만 남고 모델 feature
-allowlist에는 들어가지 않는다.
+scenario, label, run, client/host, account/device/content/Edge/network profile 같은 raw ID는
+metadata column에만 남고 모델 feature allowlist에는 들어가지 않는다.
+
+현재 exporter는 다음 feature group을 구분해 metadata에 기록한다.
+
+- `F0_F1`: 요청 수, segment timing, token fan-out의 기본 특징
+- `F2_relation`: 최근 10분 account/content session, device, IP, token 관계 특징
+- `F3_behavior`: timing 분산, burst/concurrency, segment 순서·중복, cache/응답시간 특징
+- `F4_lifecycle`: token 발급 이후 사용 시간과 남은 TTL
+
+10분 특징은 export 대상 manifest에 결합된 session cohort 안에서 각 session 종료 시점까지의
+trailing window로 계산한다. 최종 dataset은 manifest 집합과 함께 버전과 hash를 고정한다.
 
 최소 fitting 경로만 확인하려면 다음을 실행한다.
 
@@ -83,8 +93,13 @@ python3 -m venv .venv-training
 .venv-training/bin/pip install -r \
   03_experiments/04_data_tools/requirements-training-smoke.txt
 .venv-training/bin/python \
-  03_experiments/04_data_tools/train_session_smoke.py
+  03_experiments/04_data_tools/train_session_smoke.py \
+  --feature-set f0-f1
 ```
+
+`--feature-set all`은 exporter metadata에 선언된 F0~F4 전체 열의 숫자 변환과 fitting만
+검사한다. 어느 경우도 journal metric이 아니며, main 평가는 group/time/content/host split
+training pipeline에서 별도로 수행한다.
 
 이 결과는 stratified smoke check다. journal 평가에 필요한 host/content/time/account split을
 대체하지 않으며 논문 수치로 사용하지 않는다.

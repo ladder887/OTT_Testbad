@@ -38,7 +38,7 @@ python 03_experiments/05_validation/validate_inventory.py `
 - A5: 주 ViewingSession 분류에서 제외
 - run manifest token binding schema/기록 도구: 구현됨
 - manifest와 ES/Neo4j request/session 대조 validator: 구현됨
-- ViewingSession F0/F1 dataset export와 Logistic/RF smoke: 구현됨
+- ViewingSession F0~F4 dataset export, leakage audit와 Logistic/RF smoke: 구현됨
 
 smoke 검증을 통과하기 전에는 main collection을 시작하지 않는다. smoke 데이터와 지표는
 pipeline 동작 확인용이며 논문 결과에 사용하지 않는다.

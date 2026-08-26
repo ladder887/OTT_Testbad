@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "06_outputs" / "02_datasets" / "session_features.csv"
 
-FEATURE_COLUMNS = (
+F0_F1_FEATURE_COLUMNS = (
     "request_count",
     "manifest_request_count",
     "segment_bytes_total",
@@ -37,6 +37,52 @@ FEATURE_COLUMNS = (
     "token_unique_devices",
     "token_concurrent_consumers_max",
 )
+F2_RELATION_FEATURE_COLUMNS = (
+    "account_session_count_10m",
+    "account_active_sessions_max_10m",
+    "account_unique_devices_10m",
+    "account_unique_ips_10m",
+    "account_unique_tokens_10m",
+    "account_unique_contents_10m",
+    "content_session_count_10m",
+    "content_concurrent_sessions_max_10m",
+    "content_unique_accounts_10m",
+    "content_unique_devices_10m",
+    "content_unique_ips_10m",
+)
+F3_BEHAVIOR_FEATURE_COLUMNS = (
+    "segment_interval_stddev_sec",
+    "segment_interval_p95_sec",
+    "segment_interval_cv",
+    "segment_request_burst_1s_max",
+    "segment_request_burst_5s_max",
+    "segment_request_concurrency_max",
+    "unique_segment_count",
+    "segment_span",
+    "segment_duplicate_ratio",
+    "segment_skipped_ratio",
+    "segment_out_of_order_ratio",
+    "content_unique_segments_10m",
+    "content_segment_span_10m",
+    "content_segment_duplicate_ratio_10m",
+    "content_segment_range_fill_ratio_10m",
+    "manifest_poll_interval_avg_sec",
+    "manifest_poll_interval_stddev_sec",
+    "response_time_avg_ms",
+    "response_time_p95_ms",
+    "cache_hit_ratio",
+)
+F4_LIFECYCLE_FEATURE_COLUMNS = (
+    "token_age_at_session_start_sec",
+    "token_age_at_session_end_sec",
+    "token_ttl_remaining_at_session_end_sec",
+)
+FEATURE_COLUMNS = (
+    F0_F1_FEATURE_COLUMNS
+    + F2_RELATION_FEATURE_COLUMNS
+    + F3_BEHAVIOR_FEATURE_COLUMNS
+    + F4_LIFECYCLE_FEATURE_COLUMNS
+)
 METADATA_COLUMNS = (
     "sample_id",
     "run_id",
@@ -47,9 +93,13 @@ METADATA_COLUMNS = (
     "viewing_session_id",
     "logical_client_id",
     "physical_host_id",
+    "account_id",
+    "device_id",
     "content_id",
     "content_type",
     "client_ip",
+    "edge_id",
+    "network_profile_id",
     "start_time",
     "end_time",
 )
@@ -60,10 +110,13 @@ FORBIDDEN_MODEL_FIELDS = {
     "run_id",
     "logical_client_id",
     "physical_host_id",
+    "account_id",
+    "device_id",
     "network_profile_id",
     "cdn_token_id",
     "viewing_session_id",
     "client_ip",
+    "edge_id",
     "content_id",
 }
 
@@ -144,6 +197,8 @@ def load_manifests(paths: list[Path]) -> tuple[dict[str, dict[str, Any]], dict[s
                 ip_clients[source_ip] = {
                     "logical_client_id": str(client.get("logical_client_id") or ""),
                     "physical_host_id": str(client.get("physical_host_id") or ""),
+                    "edge_id": str(client.get("edge_id") or ""),
+                    "network_profile_id": str(client.get("network_profile_id") or ""),
                 }
         for binding in manifest.get("token_bindings", []):
             token_id = str(binding.get("cdn_token_id") or "")
@@ -189,6 +244,84 @@ def segment_index_from_path(path: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def population_stddev(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    average = mean(values)
+    return math.sqrt(sum((item - average) ** 2 for item in values) / len(values))
+
+
+def percentile(values: list[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = max(0.0, min(1.0, fraction)) * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def safe_ratio(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator > 0 else 0.0
+
+
+def max_events_in_window(timestamps: list[datetime], window_sec: float) -> int:
+    if not timestamps:
+        return 0
+    ordered = sorted(timestamps)
+    left = 0
+    maximum = 0
+    for right, timestamp in enumerate(ordered):
+        while (timestamp - ordered[left]).total_seconds() > window_sec:
+            left += 1
+        maximum = max(maximum, right - left + 1)
+    return maximum
+
+
+def segment_identity(request: dict[str, Any]) -> tuple[str, int] | None:
+    path = str(request.get("path") or "")
+    index = segment_index_from_path(path)
+    if index is None:
+        return None
+    return rendition_from_path(path), index
+
+
+def segment_sequence_metrics(requests: list[dict[str, Any]]) -> dict[str, float | int]:
+    identities = [segment_identity(item) for item in requests]
+    valid = [item for item in identities if item is not None]
+    indices = [item[1] for item in valid]
+    unique = set(valid)
+    duplicate_count = max(0, len(valid) - len(unique))
+    skipped = sum(1 for before, after in zip(indices, indices[1:]) if after - before > 1)
+    out_of_order = sum(1 for before, after in zip(indices, indices[1:]) if after < before)
+    segment_span = max(indices) - min(indices) + 1 if indices else 0
+    transitions = max(0, len(indices) - 1)
+    return {
+        "unique_segment_count": len(unique),
+        "segment_span": segment_span,
+        "segment_duplicate_ratio": safe_ratio(duplicate_count, len(valid)),
+        "segment_skipped_ratio": safe_ratio(skipped, transitions),
+        "segment_out_of_order_ratio": safe_ratio(out_of_order, transitions),
+    }
+
+
 def max_concurrency(intervals: list[tuple[datetime, datetime]]) -> int:
     events: list[tuple[datetime, int]] = []
     for start, end in intervals:
@@ -200,6 +333,18 @@ def max_concurrency(intervals: list[tuple[datetime, datetime]]) -> int:
         active += delta
         maximum = max(maximum, active)
     return maximum
+
+
+def request_concurrency(requests: list[dict[str, Any]]) -> int:
+    intervals: list[tuple[datetime, datetime]] = []
+    for request in requests:
+        ended = parse_datetime(request.get("timestamp"))
+        if ended is None:
+            continue
+        duration_ms = max(0.0, safe_float(request.get("response_time_ms")))
+        started = ended - timedelta(milliseconds=duration_ms)
+        intervals.append((started, ended))
+    return max_concurrency(intervals)
 
 
 def build_rows(
@@ -225,6 +370,10 @@ def build_rows(
             "session": session,
             "requests": requests,
             "segment_requests": segment_requests,
+            "account_id": str(session.get("account_id") or ""),
+            "content_id": str(session.get("content_id") or ""),
+            "client_ip": str(session.get("client_ip") or ""),
+            "device_id": str(session.get("observed_device_id") or ""),
             "start": start,
             "end": end,
         }
@@ -253,6 +402,19 @@ def build_rows(
                 [(item["start"], item["end"]) for item in entries]
             ),
         }
+
+    def trailing_entries(entry: dict[str, Any], field: str) -> list[dict[str, Any]]:
+        value = entry[field]
+        if not value:
+            return []
+        window_start = entry["end"] - timedelta(minutes=10)
+        return [
+            candidate
+            for candidate in prepared
+            if candidate[field] == value
+            and candidate["start"] <= entry["end"]
+            and candidate["end"] >= window_start
+        ]
 
     dataset_rows: list[dict[str, Any]] = []
     for entry in prepared:
@@ -292,6 +454,56 @@ def build_rows(
         client_ip = str(session.get("client_ip") or "")
         client_meta = ip_clients.get(client_ip, {})
         session_id = str(session.get("viewing_session_id") or "")
+        account_entries = trailing_entries(entry, "account_id")
+        content_entries = trailing_entries(entry, "content_id")
+        window_start = entry["end"] - timedelta(minutes=10)
+        content_window_segments = [
+            request
+            for candidate in content_entries
+            for request in candidate["segment_requests"]
+            if (
+                (timestamp := parse_datetime(request.get("timestamp"))) is not None
+                and window_start <= timestamp <= entry["end"]
+            )
+        ]
+        content_identities = [
+            identity
+            for request in content_window_segments
+            if (identity := segment_identity(request)) is not None
+        ]
+        content_indices = [identity[1] for identity in content_identities]
+        content_unique_identities = set(content_identities)
+        content_unique_indices = set(content_indices)
+        content_span = max(content_indices) - min(content_indices) + 1 if content_indices else 0
+
+        segment_metrics = segment_sequence_metrics(segments)
+        segment_times = [item for item in valid_times]
+        manifest_times = sorted(
+            timestamp
+            for request in requests
+            if request_kind(request) == "hls_manifest"
+            and (timestamp := parse_datetime(request.get("timestamp"))) is not None
+        )
+        manifest_intervals = [
+            (after - before).total_seconds()
+            for before, after in zip(manifest_times, manifest_times[1:])
+        ]
+        response_times = [max(0.0, safe_float(item.get("response_time_ms"))) for item in segments]
+        known_cache = [
+            str(item.get("cache_status") or "").upper()
+            for item in segments
+            if str(item.get("cache_status") or "").upper() not in {"", "-"}
+        ]
+        issued_at = parse_datetime(session.get("token_issued_at"))
+        ttl_remaining_values = [
+            safe_float(item.get("token_ttl_remaining_sec"))
+            for item in segments
+            if item.get("token_ttl_remaining_sec") not in (None, "", "-")
+        ]
+        actual_edge_id = str(session.get("edge_id") or "") or next(
+            (str(item.get("edge_id") or "") for item in segments if item.get("edge_id")),
+            str(client_meta.get("edge_id") or ""),
+        )
         row = {
             "sample_id": f"{label['run_id']}:{session_id}",
             **label,
@@ -299,9 +511,13 @@ def build_rows(
             "viewing_session_id": session_id,
             "logical_client_id": client_meta.get("logical_client_id", ""),
             "physical_host_id": client_meta.get("physical_host_id", ""),
+            "account_id": entry["account_id"],
+            "device_id": entry["device_id"],
             "content_id": str(session.get("content_id") or ""),
             "content_type": str(session.get("content_type") or ""),
             "client_ip": client_ip,
+            "edge_id": actual_edge_id,
+            "network_profile_id": client_meta.get("network_profile_id", ""),
             "start_time": entry["start"].isoformat().replace("+00:00", "Z"),
             "end_time": entry["end"].isoformat().replace("+00:00", "Z"),
             "request_count": len(requests),
@@ -314,6 +530,58 @@ def build_rows(
             "rendition_switch_count": rendition_switches,
             "segment_index_gap_count": gaps,
             **token_metrics[token_id],
+            "account_session_count_10m": len(account_entries),
+            "account_active_sessions_max_10m": max_concurrency(
+                [(item["start"], item["end"]) for item in account_entries]
+            ),
+            "account_unique_devices_10m": len({item["device_id"] for item in account_entries if item["device_id"]}),
+            "account_unique_ips_10m": len({item["client_ip"] for item in account_entries if item["client_ip"]}),
+            "account_unique_tokens_10m": len({item["cdn_token_id"] for item in account_entries if item["cdn_token_id"]}),
+            "account_unique_contents_10m": len({item["content_id"] for item in account_entries if item["content_id"]}),
+            "content_session_count_10m": len(content_entries),
+            "content_concurrent_sessions_max_10m": max_concurrency(
+                [(item["start"], item["end"]) for item in content_entries]
+            ),
+            "content_unique_accounts_10m": len({item["account_id"] for item in content_entries if item["account_id"]}),
+            "content_unique_devices_10m": len({item["device_id"] for item in content_entries if item["device_id"]}),
+            "content_unique_ips_10m": len({item["client_ip"] for item in content_entries if item["client_ip"]}),
+            "segment_interval_stddev_sec": round(population_stddev(intervals), 6),
+            "segment_interval_p95_sec": round(percentile(intervals, 0.95), 6),
+            "segment_interval_cv": round(safe_ratio(population_stddev(intervals), mean(intervals)), 6),
+            "segment_request_burst_1s_max": max_events_in_window(segment_times, 1.0),
+            "segment_request_burst_5s_max": max_events_in_window(segment_times, 5.0),
+            "segment_request_concurrency_max": request_concurrency(segments),
+            **{key: round(value, 6) if isinstance(value, float) else value for key, value in segment_metrics.items()},
+            "content_unique_segments_10m": len(content_unique_identities),
+            "content_segment_span_10m": content_span,
+            "content_segment_duplicate_ratio_10m": round(
+                safe_ratio(len(content_identities) - len(content_unique_identities), len(content_identities)),
+                6,
+            ),
+            "content_segment_range_fill_ratio_10m": round(
+                safe_ratio(len(content_unique_indices), content_span),
+                6,
+            ),
+            "manifest_poll_interval_avg_sec": round(mean(manifest_intervals), 6),
+            "manifest_poll_interval_stddev_sec": round(population_stddev(manifest_intervals), 6),
+            "response_time_avg_ms": round(mean(response_times), 6),
+            "response_time_p95_ms": round(percentile(response_times, 0.95), 6),
+            "cache_hit_ratio": round(
+                safe_ratio(sum(1 for value in known_cache if value == "HIT"), len(known_cache)),
+                6,
+            ),
+            "token_age_at_session_start_sec": round(
+                max(0.0, (entry["start"] - issued_at).total_seconds()) if issued_at else 0.0,
+                6,
+            ),
+            "token_age_at_session_end_sec": round(
+                max(0.0, (entry["end"] - issued_at).total_seconds()) if issued_at else 0.0,
+                6,
+            ),
+            "token_ttl_remaining_at_session_end_sec": round(
+                ttl_remaining_values[-1] if ttl_remaining_values else 0.0,
+                6,
+            ),
         }
         dataset_rows.append(row)
     return sorted(dataset_rows, key=lambda item: (item["run_id"], item["sample_id"]))
@@ -331,10 +599,12 @@ def query_graph_sessions(
     MATCH (session:ViewingSession)-[:USES_CDN_TOKEN]->(token)
     OPTIONAL MATCH (session)-[:FROM_IP]->(ip:ClientIP)
     OPTIONAL MATCH (session)-[:ON_DEVICE]->(device:Device)
+    OPTIONAL MATCH (session)-[:SERVED_BY]->(edge:Edge)
     OPTIONAL MATCH (session)-[:MAKES_REQUEST]->(request:Request)
     WITH token_id, session,
          head(collect(DISTINCT ip.ip_address)) AS client_ip,
          head(collect(DISTINCT device.device_id)) AS observed_device_id,
+         head(collect(DISTINCT edge.edge_id)) AS edge_id,
          collect(DISTINCT {
         request_id: request.request_id,
         timestamp: toString(request.timestamp),
@@ -343,6 +613,9 @@ def query_graph_sessions(
         status: request.status,
         bytes: request.bytes_sent,
         edge_id: request.edge_id,
+        response_time_ms: request.response_time_ms,
+        cache_status: request.cache_status,
+        token_ttl_remaining_sec: request.token_ttl_remaining_sec,
         client_ip: request.client_ip,
         observed_device_id: request.observed_device_id
     }) AS requests
@@ -350,7 +623,8 @@ def query_graph_sessions(
            session {
                .*,
                client_ip: client_ip,
-               observed_device_id: observed_device_id
+               observed_device_id: observed_device_id,
+               edge_id: edge_id
            } AS session,
            requests
     ORDER BY token_id, session.start_time
@@ -380,6 +654,12 @@ def write_dataset(rows: list[dict[str, Any]], output: Path, manifests: list[Path
         "normal_rows": sum(1 for item in rows if int(item["label_binary"]) == 0),
         "attack_rows": sum(1 for item in rows if int(item["label_binary"]) == 1),
         "feature_columns": list(FEATURE_COLUMNS),
+        "feature_groups": {
+            "F0_F1": list(F0_F1_FEATURE_COLUMNS),
+            "F2_relation": list(F2_RELATION_FEATURE_COLUMNS),
+            "F3_behavior": list(F3_BEHAVIOR_FEATURE_COLUMNS),
+            "F4_lifecycle": list(F4_LIFECYCLE_FEATURE_COLUMNS),
+        },
         "metadata_columns": list(METADATA_COLUMNS),
         "manifest_paths": [str(path) for path in manifests],
     }
