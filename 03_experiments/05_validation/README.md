@@ -83,3 +83,16 @@ python3 03_experiments/05_validation/audit_session_dataset.py \
 금지 field, 중복 sample/token, class-exclusive Edge/profile/content type, 상수 특징과
 단일 특징 ROC-AUC를 보고한다. 높은 단일 특징 AUC는 자동 삭제 사유가 아니라 workload
 generator artifact인지 실제 공격 신호인지 확인해야 한다는 경고다.
+
+## Edge cold/warm cache 쌍 검사
+
+대상 Edge cache를 비운 뒤 같은 scenario seed로 cold와 warm run을 순서대로 실행한다.
+두 manifest가 같은 HLS resource를 요청했으며 cache 상태가 전부 `MISS`에서 `HIT`로
+바뀌었는지 검사한다.
+
+```bash
+python3 03_experiments/05_validation/validate_edge_cache_pair.py \
+  --cold-manifest 06_outputs/01_run_manifests/COLD_RUN.json \
+  --warm-manifest 06_outputs/01_run_manifests/WARM_RUN.json \
+  --output 06_outputs/01_data_quality/cache_pair.json
+```

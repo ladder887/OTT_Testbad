@@ -18,6 +18,7 @@ def load_module(name):
 
 COLLECTION = load_module("audit_pilot_collection")
 DATASET = load_module("audit_session_dataset")
+CACHE = load_module("validate_edge_cache_pair")
 
 
 class CollectionAuditTest(unittest.TestCase):
@@ -151,6 +152,69 @@ class DatasetAuditTest(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(report["high_auc_features"], ["feature_proxy"])
         self.assertEqual(report["constant_features"], ["feature_constant"])
+
+
+class EdgeCachePairValidationTest(unittest.TestCase):
+    def test_accepts_matching_miss_then_hit_pair(self):
+        def manifest(state, run_id, token_id):
+            return {
+                "run_id": run_id,
+                "scenario_id": "N1",
+                "parameters": {
+                    "cache_state": state,
+                    "selected_clients": [{"edge_id": "edge-sg"}],
+                },
+                "token_bindings": [{"cdn_token_id": token_id, "content_id": "video_01"}],
+            }
+
+        def documents(status):
+            return [
+                {
+                    "event_source": "edge-nginx",
+                    "request_uri": "/hls/video_01/master.m3u8",
+                    "cache_status": status,
+                },
+                {
+                    "event_source": "edge-nginx",
+                    "request_uri": "/hls/video_01/720p/seg_00000.ts",
+                    "cache_status": status,
+                },
+            ]
+
+        report = CACHE.analyze(
+            manifest("cold", "cold_run", "cdn_cold"),
+            manifest("warm", "warm_run", "cdn_warm"),
+            documents("MISS"),
+            documents("HIT"),
+        )
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["cold_cache_statuses"], {"MISS": 2})
+        self.assertEqual(report["warm_cache_statuses"], {"HIT": 2})
+
+    def test_rejects_warm_miss(self):
+        cold = {
+            "run_id": "cold",
+            "scenario_id": "N1",
+            "parameters": {"cache_state": "cold", "selected_clients": [{"edge_id": "edge-kr"}]},
+            "token_bindings": [{"cdn_token_id": "cdn_1", "content_id": "video_01"}],
+        }
+        warm = {
+            "run_id": "warm",
+            "scenario_id": "N1",
+            "parameters": {"cache_state": "warm", "selected_clients": [{"edge_id": "edge-kr"}]},
+            "token_bindings": [{"cdn_token_id": "cdn_2", "content_id": "video_01"}],
+        }
+        document = {
+            "event_source": "edge-nginx",
+            "request_uri": "/hls/video_01/master.m3u8",
+            "cache_status": "MISS",
+        }
+
+        report = CACHE.analyze(cold, warm, [document], [document])
+
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("warm run contains non-HIT" in item for item in report["errors"]))
 
 
 if __name__ == "__main__":
