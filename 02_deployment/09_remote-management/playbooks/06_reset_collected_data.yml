@@ -1,0 +1,195 @@
+---
+- name: Confirm the complete collected-data reset scope
+  hosts: edge_nodes:analysis_storage:graph_processing
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Require explicit confirmation and every telemetry host
+      ansible.builtin.assert:
+        that:
+          - reset_collected_data | default(false) | bool
+          - (groups['edge_nodes'] | difference(ansible_play_hosts_all) | length) == 0
+          - (groups['analysis_storage'] | difference(ansible_play_hosts_all) | length) == 0
+          - (groups['graph_processing'] | difference(ansible_play_hosts_all) | length) == 0
+        fail_msg: >-
+          This deletes collected experiment data. Close every playback tab and
+          scenario runner, then run the playbook without --limit and pass
+          -e reset_collected_data=true.
+      run_once: true
+
+- name: Stop graph ingestion before deleting its inputs
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Stop Graph Pipeline
+      ansible.builtin.command:
+        argv: [docker, compose, stop, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+- name: Pause Edge log shipping
+  hosts: edge_nodes
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Stop Filebeat after it flushes pending events
+      ansible.builtin.command:
+        argv: [docker, compose, stop, filebeat]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+- name: Delete collected Elasticsearch and Neo4j data
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load closed-lab settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
+
+  tasks:
+    - name: Delete experiment log data streams
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9200/_data_stream/{{ item }}"
+        method: DELETE
+        status_code: [200, 404]
+        return_content: true
+      loop:
+        - access-gateway-nginx-*
+        - scrubber-nginx-*
+        - filebeat-*
+
+    - name: Delete regular and legacy experiment log indices
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all"
+        method: DELETE
+        status_code: 200
+        return_content: true
+
+    - name: Delete all experiment graph nodes and relationships
+      ansible.builtin.uri:
+        url: http://127.0.0.1:7474/db/neo4j/tx/commit
+        method: POST
+        url_username: neo4j
+        url_password: "{{ lab_settings.lab_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: MATCH (n) DETACH DELETE n
+        status_code: 200
+        return_content: true
+      register: neo4j_delete
+      failed_when: (neo4j_delete.json.errors | default([]) | length) > 0
+      no_log: true
+
+- name: Reset the Graph Pipeline input checkpoint
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Remove the persisted Elasticsearch cursor
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - run
+          - --rm
+          - --no-deps
+          - --entrypoint
+          - /bin/sh
+          - graph-pipeline
+          - -c
+          - rm -f /var/lib/graph-pipeline/checkpoint.json
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+- name: Resume Edge log shipping
+  hosts: edge_nodes
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Start Filebeat
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, filebeat]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+- name: Resume graph ingestion
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Start Graph Pipeline with an empty checkpoint
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Require Graph Pipeline to be running
+      ansible.builtin.command:
+        argv: [docker, compose, ps, --status, running, --services]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      register: graph_services
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: "'graph-pipeline' in graph_services.stdout_lines"
+
+- name: Verify empty Elasticsearch and Neo4j baselines
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load closed-lab settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
+
+  tasks:
+    - name: Count remaining experiment log documents
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*/_count?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: remaining_logs
+
+    - name: Count remaining graph data
+      ansible.builtin.uri:
+        url: http://127.0.0.1:7474/db/neo4j/tx/commit
+        method: POST
+        url_username: neo4j
+        url_password: "{{ lab_settings.lab_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: >-
+                CALL { MATCH (n) RETURN count(n) AS nodes }
+                CALL { MATCH ()-[r]->() RETURN count(r) AS relationships }
+                RETURN nodes, relationships
+        status_code: 200
+        return_content: true
+      register: remaining_graph
+      no_log: true
+
+    - name: Require a clean collection baseline
+      ansible.builtin.assert:
+        that:
+          - (remaining_logs.json.count | int) == 0
+          - (remaining_graph.json.errors | default([]) | length) == 0
+          - (remaining_graph.json.results[0].data[0].row[0] | int) == 0
+          - (remaining_graph.json.results[0].data[0].row[1] | int) == 0
+        fail_msg: Elasticsearch or Neo4j still contains experiment data.
+        success_msg: Elasticsearch and Neo4j collection baselines are empty.

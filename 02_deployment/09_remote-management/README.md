@@ -539,6 +539,39 @@ python3 03_experiments/05_validation/validate_telemetry_contract.py \
 - 두 Elasticsearch 대상에 document 존재
 - 두 Kibana data view에서 document 조회 가능
 
+### 12.5 정식 수집 전 기존 로그 초기화
+
+이 작업은 VOD/LIVE 업로드와 전체 통신 검증을 마친 뒤, 정상·공격 시청 데이터를 처음
+수집하기 직전에 한 번 실행한다. 먼저 모든 브라우저 재생 탭과 scenario runner를 종료한다.
+
+```bash
+cd ~/OTT_Testbad/02_deployment/09_remote-management
+
+bash scripts/run.sh playbooks/06_reset_collected_data.yml \
+  -e reset_collected_data=true
+```
+
+playbook은 다음 순서로 동작한다.
+
+1. Graph Pipeline을 정지한다.
+2. 네 Edge의 Filebeat를 정지해 대기 중인 로그를 먼저 전송한다.
+3. Elasticsearch의 Edge/API experiment log만 삭제한다.
+4. Neo4j의 모든 node와 relationship을 삭제한다.
+5. Graph Pipeline의 이전 Elasticsearch 처리 위치를 삭제한다.
+6. Filebeat와 Graph Pipeline을 다시 시작한다.
+7. Elasticsearch document, Neo4j node, relationship이 모두 `0`인지 확인한다.
+
+삭제되는 Elasticsearch 범위는 `access-gateway-nginx-*`, `ott-api-events-*`와 과거 호환용
+`scrubber-nginx-*`, `filebeat-*`뿐이다. 다음 항목은 유지된다.
+
+- `video_01~video_15`, `live_01~live_03` 원본과 HLS
+- PostgreSQL 사용자, 콘텐츠 metadata, 로그인 정보
+- Kibana data view와 dashboard 설정
+- Neo4j index/constraint
+
+초기화 직후 Kibana data view가 `No results` 또는 matching index 없음으로 보이는 것은
+정상이다. 새로운 정상·공격 시청 요청이 들어오면 같은 data view에 새 index가 다시 나타난다.
+
 ## 13. logical client 100개 실행
 
 ### 13.1 배포 전 조건
@@ -688,6 +721,7 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | `playbooks/03_deploy_clients.yml` | Pi마다 logical client 10개 실행 |
 | `playbooks/04_verify.yml` | media, DB, LIVE, container, endpoint 검증 |
 | `playbooks/05_probe_clients.yml` | 100개 logical client의 Edge 통신 검증 |
+| `playbooks/06_reset_collected_data.yml` | 정식 수집 전 Elasticsearch, Neo4j, Graph Pipeline checkpoint 초기화 |
 | `playbooks/90_stop_clients.yml` | logical client 정지 |
 
 ## 17. 자주 발생하는 오류
