@@ -318,7 +318,7 @@ class RuntimeSampler:
         neo4j_user: str = "neo4j",
         neo4j_password: str = "ottlab1234",
         api_timeout_sec: float = 20.0,
-        max_events_per_sample: int = 20000,
+        max_events_per_sample: int = 10000,
         event_overlap_sec: float = 180.0,
     ) -> None:
         self.ssh_user = ssh_user
@@ -404,6 +404,8 @@ class RuntimeSampler:
             payload,
             timeout_sec=self.api_timeout_sec,
         )
+        if body.get("error"):
+            raise RuntimeSampleError(f"Elasticsearch runtime query failed: {body['error']}")
         hits_block = body.get("hits", {})
         total = hits_block.get("total", 0)
         total_value = int(total.get("value", 0) if isinstance(total, dict) else total or 0)

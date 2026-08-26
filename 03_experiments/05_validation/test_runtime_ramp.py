@@ -2,7 +2,9 @@ import importlib.util
 import sys
 import unittest
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 
 def load_module(name, filename):
@@ -30,6 +32,7 @@ class RuntimeSamplerTest(unittest.TestCase):
             ssh_user="ottadmin",
             ssh_key=Path("unused"),
         )
+        self.assertEqual(sampler.max_events_per_sample, 10_000)
         sampler.seen_es_documents.add("index:document")
         sampler.all_ingest_lag_ms.extend([10.0, 20.0])
         sampler.all_graph_lag_ms.append(30.0)
@@ -41,6 +44,20 @@ class RuntimeSamplerTest(unittest.TestCase):
         self.assertEqual(sampler.all_ingest_lag_ms, [])
         self.assertEqual(sampler.all_graph_lag_ms, [])
         self.assertFalse(sampler.event_query_truncated)
+
+    def test_elasticsearch_error_body_is_not_reported_as_zero_events(self):
+        sampler = SAMPLER.RuntimeSampler(
+            ssh_user="ottadmin",
+            ssh_key=Path("unused"),
+        )
+        now = datetime.now(timezone.utc)
+        with mock.patch.object(
+            SAMPLER,
+            "http_json",
+            return_value=({"error": {"type": "illegal_argument_exception"}}, 1.0),
+        ):
+            with self.assertRaises(SAMPLER.RuntimeSampleError):
+                sampler._query_elasticsearch(now - timedelta(seconds=5), now)
 
     def test_percentiles_and_counter_rates(self):
         self.assertEqual(SAMPLER.percentile_summary([1, 2, 3, 4])["p50"], 2.5)
