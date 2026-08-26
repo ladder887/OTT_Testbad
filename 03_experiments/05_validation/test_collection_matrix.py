@@ -40,7 +40,7 @@ class CollectionMatrixTest(unittest.TestCase):
             dataset_prefix="tnsm_100lc_20260826_matrix_test",
             phase=phase,
             splits=splits,
-            repetitions=1,
+            repetitions=4,
             target_clients=20,
             base_seed=20260826,
             smoke=True,
@@ -64,9 +64,34 @@ class CollectionMatrixTest(unittest.TestCase):
                     GENERATOR.content_pool_for_run(run["data_split"], run["scenario_id"])
                 )
                 self.assertEqual(set(run["allowed_content_ids"]), expected_contents)
+                self.assertEqual(set(run["preferred_content_ids"]), expected_contents)
+                self.assertEqual(len(run["preferred_content_ids"]), len(expected_contents))
+                self.assertTrue(set(run["planned_content_ids"]).issubset(expected_contents))
+                self.assertEqual(
+                    sum(run["planned_content_session_counts"].values()),
+                    run["planned_session_count"],
+                )
+                self.assertEqual(
+                    len(run["client_session_contributions"]),
+                    run["required_client_count"],
+                )
             self.assertEqual(len(reserved), len(set(reserved)))
             self.assertLessEqual(batch["planned_client_count"], batch["target_client_count"])
             self.assertEqual({run["class"] for run in batch["runs"]}, {"normal", "attack"})
+
+        for split in ("train", "validation", "test"):
+            balance = report["planned_balance"][split]
+            for class_name in ("normal", "attack"):
+                self.assertTrue(all(balance[class_name]["network_profile_session_counts"].values()))
+                self.assertTrue(all(balance[class_name]["edge_session_counts"].values()))
+                self.assertTrue(all(balance[class_name]["content_session_counts"].values()))
+            for metric in (
+                "network_profile_session_counts",
+                "edge_session_counts",
+                "physical_host_session_counts",
+                "content_session_counts",
+            ):
+                self.assertLessEqual(balance["normal_attack_total_variation"][metric], 0.15)
 
     def test_low_strength_attack_variants_are_reserved_for_test(self):
         matrix = self.build()
@@ -85,6 +110,22 @@ class CollectionMatrixTest(unittest.TestCase):
         self.assertNotIn(("A2", "stealth"), variants["train"])
         self.assertIn(("A2", "stealth"), variants["test"])
         self.assertNotIn(("A2", "fast"), variants["test"])
+
+    def test_main_matrix_rejects_too_few_runs_for_train_content_overlap(self):
+        with self.assertRaisesRegex(GENERATOR.MatrixError, "content_session_counts misses"):
+            GENERATOR.build_matrix(
+                inventory=self.inventory,
+                dataset_prefix="tnsm_100lc_20260826_too_small",
+                phase="main",
+                splits=("train",),
+                repetitions=1,
+                target_clients=20,
+                base_seed=20260826,
+                smoke=True,
+                cache_state="warm",
+                stagger_min_sec=0.0,
+                stagger_max_sec=0.1,
+            )
 
     def test_calibration_matrix_contains_all_attack_strengths(self):
         matrix = self.build(phase="calibration", splits=("train",))
@@ -120,6 +161,15 @@ class CollectionMatrixTest(unittest.TestCase):
             path = Path(temp_dir) / "matrix.json"
             path.write_text(json.dumps(matrix), encoding="utf-8")
             with self.assertRaisesRegex(MATRIX_RUNNER.MatrixExecutionError, "overlapping clients"):
+                MATRIX_RUNNER.load_matrix(path)
+
+    def test_matrix_runner_rejects_incomplete_schema_v2_plan(self):
+        matrix = self.build(phase="calibration", splits=("train",))
+        matrix["batches"][0]["runs"][0]["preferred_content_ids"] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "matrix.json"
+            path.write_text(json.dumps(matrix), encoding="utf-8")
+            with self.assertRaisesRegex(MATRIX_RUNNER.MatrixExecutionError, "incomplete schema-v2"):
                 MATRIX_RUNNER.load_matrix(path)
 
     def test_matrix_runner_requires_a_recent_passed_gate(self):
@@ -269,6 +319,44 @@ class CollectionMatrixTest(unittest.TestCase):
         )
         self.assertFalse(report["passed"])
         self.assertIn("account_id", report["cross_split_groups"])
+
+    def test_main_split_audit_rejects_class_exclusive_content(self):
+        rows = []
+        for index, label in enumerate((0, 0, 1, 1), start=1):
+            rows.append(
+                {
+                    "dataset_prefix": "tnsm_100lc_20260826_main",
+                    "collection_matrix_id": "matrix-main",
+                    "data_split": "train",
+                    "run_id": f"run-{index}",
+                    "matrix_run_key": f"train-run-{index}",
+                    "cdn_token_id": f"token-{index}",
+                    "logical_client_id": f"lc{index:03d}",
+                    "account_id": f"account-{index}",
+                    "device_id": f"device-{index}",
+                    "client_ip": f"192.168.0.{150 + index}",
+                    "physical_host_id": "pi01",
+                    "content_id": "video_01" if label == 0 else "video_02",
+                    "content_type": "vod",
+                    "edge_id": "edge-kr",
+                    "network_profile_id": "P0",
+                    "scenario_id": "N1" if label == 0 else "A1",
+                    "scenario_variant": "standard" if label == 0 else "high_fanout",
+                    "label_binary": str(label),
+                    "timing_scaled": "false",
+                    "start_time": f"2026-08-26T00:0{index}:00Z",
+                }
+            )
+
+        report = SPLIT_AUDITOR.audit_rows(
+            rows,
+            required_splits={"train"},
+            enforce_main_contract=True,
+            require_scenario_coverage=False,
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("content_id has class-exclusive values" in item for item in report["errors"]))
 
 
 if __name__ == "__main__":

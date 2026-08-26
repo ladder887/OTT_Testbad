@@ -65,15 +65,19 @@ docker compose --env-file .env.lab -f docker-compose.lab.yml down -v
 ## 확장 실험 준비 순서
 
 1. `check_collection_gate.py`로 물리 장비 18대의 NTP, 시각 차이, 부하, disk, container와 endpoint를 검사한다.
-2. `generate_collection_matrix.py`로 split/client/content/scenario/variant를 고정한다.
+2. `generate_collection_matrix.py`로 split/client/content/scenario/variant와 예상 session
+   기여도를 고정하고 정상/공격별 content/Edge/profile/host 분포를 검사한다.
 3. `run_collection_matrix.py`를 `--execute` 없이 실행해 예약 중복과 matrix 구조를 확인한다.
 4. calibration batch를 실행하고 각 run의 Elasticsearch/Neo4j 자동 검증을 통과시킨다.
 5. 20/40/60/80/100-client ramp에서 실제 동시성과 ingest/graph lag를 측정한다.
 6. 수집 데이터를 초기화한 뒤 main matrix를 실행하고 dataset/split 감사를 통과시킨다.
 
 N1~N7과 A1/A2/A3/A6/A7 runner, 100개 `ipvlan` client, run validator, cache/graph replay,
-F0~F4 exporter와 hard-negative pilot은 구현·검증됐다. 아직 남은 main gate는 실제
-혼합 batch 파일럿과 20~100-client runtime 측정이다.
+F0~F4 exporter와 hard-negative pilot은 구현·검증됐다. 2026-08-27 기준 혼합 batch와
+20/40/60/80/100-client runtime ramp도 모두 통과했다. 첫 비축소 calibration의 21개
+run은 기술 검증을 통과했지만, 50개 session에서 content와 network profile의 정상/공격
+분포 차이가 허용 기준을 넘어 학습 데이터로는 기각했다. 현재 matrix schema v2와 실제
+dataset gate가 이 차이를 제한하며, 다음 단계는 균형화한 calibration을 재수집하는 것이다.
 
 ## 원격 장비 관리
 

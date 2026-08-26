@@ -41,6 +41,15 @@ PROVENANCE_GROUP_FIELDS = (
     "content_id",
 )
 REQUIRED_SCENARIOS = {f"N{index}" for index in range(1, 8)} | {"A1", "A2", "A3", "A6", "A7"}
+BALANCE_FIELDS = (
+    "physical_host_id",
+    "content_id",
+    "content_type",
+    "edge_id",
+    "network_profile_id",
+)
+EDGE_IDS = {"edge-kr", "edge-jp", "edge-sg", "edge-us"}
+NETWORK_PROFILE_IDS = {"P0", "P1", "P2", "P3", "P4"}
 MAIN_ATTACK_VARIANTS = {
     "train": {
         "A1": "high_fanout",
@@ -84,12 +93,25 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def categorical_total_variation(normal: Counter[str], attack: Counter[str]) -> float:
+    categories = ({item for item in normal if item} | {item for item in attack if item})
+    normal_total = sum(normal[item] for item in categories)
+    attack_total = sum(attack[item] for item in categories)
+    if not categories or normal_total <= 0 or attack_total <= 0:
+        return 1.0
+    return 0.5 * sum(
+        abs((normal[item] / normal_total) - (attack[item] / attack_total))
+        for item in categories
+    )
+
+
 def audit_rows(
     rows: list[dict[str, Any]],
     *,
     required_splits: set[str],
     enforce_main_contract: bool,
     require_scenario_coverage: bool,
+    max_metadata_total_variation: float = 0.15,
 ) -> dict[str, Any]:
     if not rows:
         raise SplitAuditError("dataset is empty")
@@ -106,6 +128,12 @@ def audit_rows(
     missing = sorted(required_columns - set(rows[0]))
     if missing:
         raise SplitAuditError(f"dataset is missing split-provenance columns: {missing}")
+    if enforce_main_contract:
+        missing_balance_columns = sorted(set(BALANCE_FIELDS) - set(rows[0]))
+        if missing_balance_columns:
+            raise SplitAuditError(
+                f"main dataset is missing balance columns: {missing_balance_columns}"
+            )
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -141,6 +169,52 @@ def audit_rows(
         labels = Counter(str(row.get("label_binary") or "") for row in split_rows)
         hosts = {str(row.get("physical_host_id") or "") for row in split_rows if row.get("physical_host_id")}
         contents = {str(row.get("content_id") or "") for row in split_rows if row.get("content_id")}
+        metadata_balance: dict[str, Any] = {}
+        normal_rows = [row for row in split_rows if str(row.get("label_binary") or "") == "0"]
+        attack_rows = [row for row in split_rows if str(row.get("label_binary") or "") == "1"]
+        expected_coverage = {
+            "physical_host_id": SPLIT_HOSTS.get(split, set()),
+            "content_id": VOD_CONTENTS.get(split, set()) | LIVE_CONTENTS.get(split, set()),
+            "content_type": {"vod", "live"},
+            "edge_id": EDGE_IDS,
+            "network_profile_id": NETWORK_PROFILE_IDS,
+        }
+        for field in BALANCE_FIELDS:
+            normal_counts = Counter(str(row.get(field) or "") for row in normal_rows)
+            attack_counts = Counter(str(row.get(field) or "") for row in attack_rows)
+            normal_values = {item for item in normal_counts if item}
+            attack_values = {item for item in attack_counts if item}
+            only_normal = sorted(normal_values - attack_values)
+            only_attack = sorted(attack_values - normal_values)
+            missing_count = normal_counts.get("", 0) + attack_counts.get("", 0)
+            variation = categorical_total_variation(normal_counts, attack_counts)
+            metadata_balance[field] = {
+                "normal": dict(sorted(normal_counts.items())),
+                "attack": dict(sorted(attack_counts.items())),
+                "only_normal": only_normal,
+                "only_attack": only_attack,
+                "missing_count": missing_count,
+                "normal_attack_total_variation": round(variation, 6),
+            }
+            if enforce_main_contract:
+                if missing_count:
+                    errors.append(f"{split}: {field} is missing from {missing_count} rows")
+                if only_normal or only_attack:
+                    errors.append(
+                        f"{split}: {field} has class-exclusive values; "
+                        f"normal_only={only_normal}, attack_only={only_attack}"
+                    )
+                for class_name, values in (("normal", normal_values), ("attack", attack_values)):
+                    missing_values = sorted(expected_coverage[field] - values)
+                    if missing_values:
+                        errors.append(
+                            f"{split}/{class_name}: {field} misses required values {missing_values}"
+                        )
+                if variation > max_metadata_total_variation:
+                    errors.append(
+                        f"{split}: {field} normal/attack total variation {variation:.3f} exceeds "
+                        f"{max_metadata_total_variation:.3f}"
+                    )
         if enforce_main_contract:
             invalid_hosts = sorted(hosts - SPLIT_HOSTS[split])
             invalid_contents = sorted(
@@ -174,6 +248,7 @@ def audit_rows(
             "scenario_counts": dict(sorted(scenarios.items())),
             "physical_host_ids": sorted(hosts),
             "content_ids": sorted(contents),
+            "metadata_balance": metadata_balance,
             "run_count": len({str(row.get("run_id") or "") for row in split_rows}),
         }
 
@@ -215,6 +290,7 @@ def audit_rows(
         "cross_split_groups": crossings,
         "timing_scaled_row_count": scaled_rows,
         "temporal_test_is_strictly_future": temporal_test_is_future,
+        "metadata_total_variation_threshold": max_metadata_total_variation,
         "splits": split_reports,
         "errors": errors,
         "warnings": warnings,
@@ -226,6 +302,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--mode", choices=("batch", "main"), default="main")
     parser.add_argument("--required-splits", default="train,validation,test")
+    parser.add_argument("--max-metadata-total-variation", type=float, default=0.15)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -242,6 +319,7 @@ def main() -> int:
             required_splits=required_splits,
             enforce_main_contract=args.mode == "main",
             require_scenario_coverage=args.mode == "main",
+            max_metadata_total_variation=args.max_metadata_total_variation,
         )
     except (OSError, SplitAuditError, ValueError) as exc:
         print(f"dataset split audit failed: {exc}", file=sys.stderr)

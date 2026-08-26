@@ -68,6 +68,8 @@ F3_BEHAVIOR_FEATURE_COLUMNS = (
     "content_segment_range_fill_ratio_10m",
     "manifest_poll_interval_avg_sec",
     "manifest_poll_interval_stddev_sec",
+)
+INFRASTRUCTURE_CONTEXT_COLUMNS = (
     "response_time_avg_ms",
     "response_time_p95_ms",
     "cache_hit_ratio",
@@ -659,7 +661,11 @@ def write_dataset(rows: list[dict[str, Any]], output: Path, manifests: list[Path
     if leaked_features:
         raise ExportError(f"forbidden model fields in feature allowlist: {sorted(leaked_features)}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    columns = list(METADATA_COLUMNS) + list(FEATURE_COLUMNS)
+    columns = (
+        list(METADATA_COLUMNS)
+        + list(FEATURE_COLUMNS)
+        + list(INFRASTRUCTURE_CONTEXT_COLUMNS)
+    )
     with output.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
@@ -674,6 +680,7 @@ def write_dataset(rows: list[dict[str, Any]], output: Path, manifests: list[Path
         "normal_rows": sum(1 for item in rows if int(item["label_binary"]) == 0),
         "attack_rows": sum(1 for item in rows if int(item["label_binary"]) == 1),
         "feature_columns": list(FEATURE_COLUMNS),
+        "infrastructure_context_columns": list(INFRASTRUCTURE_CONTEXT_COLUMNS),
         "feature_groups": {
             "F0_F1": list(F0_F1_FEATURE_COLUMNS),
             "F2_relation": list(F2_RELATION_FEATURE_COLUMNS),

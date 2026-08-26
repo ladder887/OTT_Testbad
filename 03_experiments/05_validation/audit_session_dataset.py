@@ -43,6 +43,13 @@ AUDITED_METADATA = (
     "edge_id",
     "network_profile_id",
 )
+PROXY_METADATA = {
+    "physical_host_id",
+    "content_id",
+    "content_type",
+    "edge_id",
+    "network_profile_id",
+}
 
 
 class DatasetAuditError(RuntimeError):
@@ -94,6 +101,18 @@ def summarize_values(labels: list[int], values: list[float]) -> dict[str, Any]:
     }
 
 
+def categorical_total_variation(normal: Counter[str], attack: Counter[str]) -> float:
+    categories = ({item for item in normal if item} | {item for item in attack if item})
+    normal_total = sum(normal[item] for item in categories)
+    attack_total = sum(attack[item] for item in categories)
+    if not categories or normal_total <= 0 or attack_total <= 0:
+        return 1.0
+    return 0.5 * sum(
+        abs((normal[item] / normal_total) - (attack[item] / attack_total))
+        for item in categories
+    )
+
+
 def load_contract(dataset: Path) -> tuple[list[str], dict[str, Any]]:
     metadata_path = dataset.with_suffix(".metadata.json")
     if not metadata_path.exists():
@@ -108,7 +127,11 @@ def load_contract(dataset: Path) -> tuple[list[str], dict[str, Any]]:
     return feature_columns, metadata
 
 
-def audit(dataset: Path, high_auc_threshold: float) -> dict[str, Any]:
+def audit(
+    dataset: Path,
+    high_auc_threshold: float,
+    metadata_tv_threshold: float = 0.15,
+) -> dict[str, Any]:
     feature_columns, metadata = load_contract(dataset)
     with dataset.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -164,15 +187,26 @@ def audit(dataset: Path, high_auc_threshold: float) -> dict[str, Any]:
         attack_values = {item for item in per_class["attack"] if item}
         only_normal = sorted(normal_values - attack_values)
         only_attack = sorted(attack_values - normal_values)
+        missing_count = sum(not str(row.get(field) or "").strip() for row in rows)
+        variation = categorical_total_variation(per_class["normal"], per_class["attack"])
         metadata_distribution[field] = {
             "normal": dict(sorted(per_class["normal"].items())),
             "attack": dict(sorted(per_class["attack"].items())),
             "only_normal": only_normal,
             "only_attack": only_attack,
+            "missing_count": missing_count,
+            "normal_attack_total_variation": round(variation, 6),
         }
-        if field in {"edge_id", "network_profile_id", "content_type"} and (only_normal or only_attack):
-            warnings.append(
+        if field in PROXY_METADATA and missing_count:
+            errors.append(f"{field} is missing from {missing_count} rows")
+        if field in PROXY_METADATA and (only_normal or only_attack):
+            errors.append(
                 f"{field} has class-exclusive values; normal_only={only_normal}, attack_only={only_attack}"
+            )
+        if field in PROXY_METADATA and variation > metadata_tv_threshold:
+            errors.append(
+                f"{field} normal/attack total variation {variation:.3f} exceeds "
+                f"{metadata_tv_threshold:.3f}"
             )
 
     run_labels: dict[str, set[int]] = defaultdict(set)
@@ -209,6 +243,7 @@ def audit(dataset: Path, high_auc_threshold: float) -> dict[str, Any]:
         "token_count": len(token_runs),
         "feature_count": len(feature_columns),
         "high_auc_threshold": high_auc_threshold,
+        "metadata_total_variation_threshold": metadata_tv_threshold,
         "high_auc_features": sorted(high_auc_features),
         "constant_features": sorted(constant_features),
         "feature_reports": feature_reports,
@@ -222,6 +257,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--high-auc-threshold", type=float, default=0.95)
+    parser.add_argument("--metadata-tv-threshold", type=float, default=0.15)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -229,7 +265,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        report = audit(args.dataset.resolve(), args.high_auc_threshold)
+        report = audit(
+            args.dataset.resolve(),
+            args.high_auc_threshold,
+            args.metadata_tv_threshold,
+        )
     except (DatasetAuditError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"dataset audit failed: {exc}", file=sys.stderr)
         return 2

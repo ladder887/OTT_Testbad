@@ -39,11 +39,16 @@ python 03_experiments/05_validation/validate_inventory.py `
 - run manifest token binding schema/기록 도구: 구현됨
 - manifest와 ES/Neo4j request/session 대조 validator: 구현됨
 - ViewingSession F0~F4 dataset export, leakage audit와 Logistic/RF smoke: 구현됨
-- train/validation/test client·host·content 사전 예약 matrix: 구현됨
+- train/validation/test client·host·content 사전 예약 matrix: schema v2 구현됨
+- 정상/공격별 예상 session 기준 content/Edge/profile/host 균형 gate: 구현됨
 - 동시 batch logical-client lock과 run별 ES/Neo4j 자동 검증: 구현됨
 - 수집 직전 NTP/시각 차이/부하/container/endpoint gate: 구현됨
-- 최종 CSV split provenance 누수 감사: 구현됨
+- 최종 CSV split provenance 누수와 metadata 분포(TV 0.15) 감사: 구현됨
 
-개별 시나리오와 hard-negative smoke는 통과했다. 혼합 batch 및 20/40/60/80/100-client
-runtime calibration을 통과하기 전에는 main collection을 시작하지 않는다. smoke 데이터와
-지표는 pipeline 동작 확인용이며 논문 결과에 사용하지 않는다.
+개별 시나리오, hard-negative smoke, 혼합 batch와 20/40/60/80/100-client runtime
+ramp는 통과했다. runtime ramp에서는 모든 단계가 목표 동시성, HTTP 무실패,
+Elasticsearch 수집 시각 보존, token-graph 반영과 backlog 회복 조건을 만족했다. 첫
+비축소 calibration 21개 run도 실행 검증은 통과했지만, export한 50개 session은 content
+TV 0.465와 network profile TV 0.369로 학습에서 제외했다. matrix v2로 균형화한
+calibration을 재수집해 TV 0.15 이하와 class별 전체 metadata coverage를 확인한 뒤 main
+collection으로 진행한다. smoke/pilot metric은 논문 분류 성능 결과에 사용하지 않는다.

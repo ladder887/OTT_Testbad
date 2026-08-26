@@ -52,6 +52,9 @@ class SessionDatasetExportTest(unittest.TestCase):
                 EXPORTER.FEATURE_COLUMNS
             )
         )
+        self.assertTrue(
+            set(EXPORTER.INFRASTRUCTURE_CONTEXT_COLUMNS).isdisjoint(EXPORTER.FEATURE_COLUMNS)
+        )
 
     def test_graph_query_uses_a_node_map_projection(self):
         with mock.patch.object(EXPORTER, "neo4j_query", return_value=[]) as query:

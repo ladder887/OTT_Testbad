@@ -374,6 +374,8 @@ class ScenarioCoordinator:
         variant: str = "default",
         reserved_client_ids: tuple[str, ...] = (),
         content_ids: tuple[str, ...] = (),
+        preferred_content_ids: tuple[str, ...] = (),
+        planned_content_ids: tuple[str, ...] = (),
         data_split: str = "",
         matrix_id: str = "",
         matrix_run_key: str = "",
@@ -390,16 +392,28 @@ class ScenarioCoordinator:
         self.variant = resolve_scenario_variant(scenario_id, self.requested_variant, seed)
         self.reserved_client_ids = reserved_client_ids
         self.content_ids = content_ids
+        self.preferred_content_ids = preferred_content_ids
+        self.planned_content_ids = planned_content_ids
         self.data_split = data_split
         self.matrix_id = matrix_id
         self.matrix_run_key = matrix_run_key
         expected_content_type = "live" if scenario_id in {"N7", "A7"} else "vod"
         allowed_contents = set(LIVE_CONTENT_IDS if expected_content_type == "live" else VOD_CONTENT_IDS)
-        unknown_contents = sorted(set(content_ids) - allowed_contents)
+        unknown_contents = sorted(
+            (set(content_ids) | set(preferred_content_ids) | set(planned_content_ids))
+            - allowed_contents
+        )
         if unknown_contents:
             raise CoordinatorError(
                 f"invalid {expected_content_type} content IDs for {scenario_id}: {','.join(unknown_contents)}"
             )
+        effective_allowed_contents = set(content_ids) if content_ids else allowed_contents
+        if not set(preferred_content_ids).issubset(effective_allowed_contents):
+            raise CoordinatorError("preferred contents must be inside the allowed content pool")
+        if not set(planned_content_ids).issubset(effective_allowed_contents):
+            raise CoordinatorError("planned contents must be inside the allowed content pool")
+        if preferred_content_ids and not set(planned_content_ids).issubset(preferred_content_ids):
+            raise CoordinatorError("planned contents must be included in the preferred content order")
         minimum_contents = 2 if scenario_id in {"A2"} or (
             scenario_id == "N1" and self.variant == "catalog_preview"
         ) else 1
@@ -416,6 +430,8 @@ class ScenarioCoordinator:
             "requested_variant": self.requested_variant,
             "reserved_client_ids": list(reserved_client_ids),
             "allowed_content_ids": list(content_ids),
+            "preferred_content_ids": list(preferred_content_ids),
+            "planned_content_ids": list(planned_content_ids),
         }
         if data_split:
             self.parameters["data_split"] = data_split
@@ -449,12 +465,44 @@ class ScenarioCoordinator:
         defaults = LIVE_CONTENT_IDS if live else VOD_CONTENT_IDS
         return list(self.content_ids or defaults)
 
-    def content(self, live: bool = False, exclude: set[str] | None = None) -> str:
-        candidates = self.content_candidates(live=live)
+    def content_from_candidates(
+        self,
+        candidates: list[str] | tuple[str, ...],
+        exclude: set[str] | None = None,
+    ) -> str:
         available = [item for item in candidates if item not in (exclude or set())]
         if not available:
             raise CoordinatorError("the allowed content pool has no unused content")
+        for content_id in self.preferred_content_ids:
+            if content_id in available:
+                return content_id
         return self.rng.choice(available)
+
+    def content(self, live: bool = False, exclude: set[str] | None = None) -> str:
+        return self.content_from_candidates(self.content_candidates(live=live), exclude)
+
+    def select_run_clients(self, count: int) -> list[LogicalClient]:
+        if self.reserved_client_ids:
+            if len(self.clients) != count:
+                raise CoordinatorError(
+                    f"reserved run has {len(self.clients)} clients; scenario requires {count}"
+                )
+            return list(self.clients)
+        return select_clients(self.clients, count, self.seed)
+
+    def validate_planned_content_usage(self) -> None:
+        if not self.planned_content_ids:
+            return
+        actual = {
+            str(binding.get("content_id") or "")
+            for binding in self.token_bindings
+            if binding.get("content_id")
+        }
+        expected = set(self.planned_content_ids)
+        if actual != expected:
+            raise CoordinatorError(
+                f"planned content mismatch: expected={sorted(expected)}, actual={sorted(actual)}"
+            )
 
     def _record_assignment_result(self, assignment: Assignment, result: dict[str, Any]) -> None:
         self.remote_results.append(
@@ -495,7 +543,7 @@ class ScenarioCoordinator:
         return [results_by_id[item.client.logical_client_id] for item in assignments]
 
     def single_vod(self, phases: list[dict[str, Any]], content_id: str | None = None) -> None:
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_id = content_id or self.content()
         camouflage = choose_camouflage(self.rng, content_id, attack=False)
@@ -528,7 +576,7 @@ class ScenarioCoordinator:
             candidates = self.content_candidates()
         if not candidates:
             raise CoordinatorError(f"no allowed content supports N1 variant {self.variant}")
-        content_id = self.rng.choice(candidates)
+        content_id = self.content_from_candidates(candidates)
         phase = vod_phase(
             self.count(low, high, 5),
             delay=self.delay((5.2, 6.9)),
@@ -538,7 +586,7 @@ class ScenarioCoordinator:
         self.parameters["viewing_profile"] = self.variant
 
     def _run_n1_catalog_preview(self) -> None:
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_count = min(self.count(2, 5, 2), len(self.content_candidates()))
         content_ids: list[str] = []
@@ -624,7 +672,7 @@ class ScenarioCoordinator:
         self.parameters["pause_sec"] = round(pause_sec, 3)
 
     def run_n5(self) -> None:
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_id = self.content()
         pause_sec = self.pause(180, 600, 3.0)
@@ -657,7 +705,7 @@ class ScenarioCoordinator:
             return
 
         consumer_count = self.required_client_count()
-        selected = select_clients(self.clients, consumer_count, self.seed)
+        selected = self.select_run_clients(consumer_count)
         self.selected = selected
         household_email = selected[0].account_email
         assignments: list[Assignment] = []
@@ -706,7 +754,7 @@ class ScenarioCoordinator:
 
     def _run_n6_flash_crowd(self) -> None:
         consumer_count = self.required_client_count()
-        selected = select_clients(self.clients, consumer_count, self.seed)
+        selected = self.select_run_clients(consumer_count)
         self.selected = selected
         content_id = self.content()
         assignments: list[Assignment] = []
@@ -755,7 +803,7 @@ class ScenarioCoordinator:
             self._run_n7_popular_channel()
             return
 
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_id = self.content(live=True)
         duration_sec = self.pause(220, 420, 15.0)
@@ -784,7 +832,7 @@ class ScenarioCoordinator:
 
     def _run_n7_popular_channel(self) -> None:
         consumer_count = self.required_client_count()
-        selected = select_clients(self.clients, consumer_count, self.seed)
+        selected = self.select_run_clients(consumer_count)
         self.selected = selected
         content_id = self.content(live=True)
         duration_sec = self.pause(220, 420, 15.0)
@@ -839,7 +887,7 @@ class ScenarioCoordinator:
 
     def _run_token_relay(self, live: bool) -> None:
         consumer_count = self.required_client_count() - 1
-        selected = select_clients(self.clients, consumer_count + 1, self.seed)
+        selected = self.select_run_clients(consumer_count + 1)
         owner = selected[0]
         consumers = selected[1:]
         self.selected = selected
@@ -917,7 +965,7 @@ class ScenarioCoordinator:
         self._run_token_relay(live=False)
 
     def run_a2(self) -> None:
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_count = min(self.count(2, 5, 2), len(self.content_candidates()))
         content_ids: list[str] = []
@@ -958,7 +1006,7 @@ class ScenarioCoordinator:
         )
 
     def run_a3(self) -> None:
-        client = select_clients(self.clients, 1, self.seed)[0]
+        client = self.select_run_clients(1)[0]
         self.selected = [client]
         content_id = self.content()
         if self.variant == "low_parallel":
@@ -993,7 +1041,7 @@ class ScenarioCoordinator:
         )
 
     def run_a6(self) -> None:
-        selected = select_clients(self.clients, 4, self.seed)
+        selected = self.select_run_clients(4)
         self.selected = selected
         content_id = self.content()
         hop_count = self.count(7, 17, 2)
@@ -1069,7 +1117,7 @@ class ScenarioCoordinator:
 
         if dry_run:
             preview_count = self.required_client_count()
-            self.selected = select_clients(self.clients, preview_count, self.seed)
+            self.selected = self.select_run_clients(preview_count)
             manifest["logical_client_ids"] = [item.logical_client_id for item in self.selected]
             manifest["parameters"] = {
                 **self.parameters,
@@ -1090,6 +1138,7 @@ class ScenarioCoordinator:
 
         try:
             run_method()
+            self.validate_planned_content_usage()
             manifest["status"] = "completed"
         except Exception as exc:
             manifest["status"] = "failed"
@@ -1155,6 +1204,16 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="comma-separated VOD or LIVE IDs this run is allowed to select",
     )
+    parser.add_argument(
+        "--preferred-content-ids",
+        default="",
+        help="ordered content preference supplied by the collection matrix",
+    )
+    parser.add_argument(
+        "--planned-content-ids",
+        default="",
+        help="comma-separated contents that this run must actually use",
+    )
     parser.add_argument("--data-split", default="", help="train/validation/test provenance recorded in the manifest")
     parser.add_argument("--matrix-id", default="", help="collection matrix identifier recorded in the manifest")
     parser.add_argument("--matrix-run-key", default="", help="unique run key within the collection matrix")
@@ -1190,6 +1249,8 @@ def main() -> int:
     try:
         reserved_client_ids = parse_identifier_list(args.reserved_client_ids)
         content_ids = parse_identifier_list(args.content_ids)
+        preferred_content_ids = parse_identifier_list(args.preferred_content_ids)
+        planned_content_ids = parse_identifier_list(args.planned_content_ids)
     except CoordinatorError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -1233,6 +1294,8 @@ def main() -> int:
         variant=args.variant,
         reserved_client_ids=reserved_client_ids,
         content_ids=content_ids,
+        preferred_content_ids=preferred_content_ids,
+        planned_content_ids=planned_content_ids,
         data_split=args.data_split.strip(),
         matrix_id=args.matrix_id.strip(),
         matrix_run_key=args.matrix_run_key.strip(),

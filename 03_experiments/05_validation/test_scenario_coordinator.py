@@ -177,6 +177,50 @@ class ScenarioCoordinatorTest(unittest.TestCase):
             )
         )
 
+    def test_reserved_client_order_controls_the_token_owner(self):
+        ordered_clients = [self.clients[13], self.clients[1], self.clients[22]]
+        reserved = tuple(client.logical_client_id for client in ordered_clients)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RUNNER.ScenarioCoordinator(
+                clients=ordered_clients,
+                executor=FakeExecutor(),
+                scenario_id="A1",
+                seed=12345,
+                smoke=True,
+                dataset_prefix="tnsm_100lc_20260826_smoke",
+                output_dir=Path(temp_dir),
+                variant="low_fanout",
+                reserved_client_ids=reserved,
+                content_ids=("video_01", "video_02"),
+            )
+            manifest, _ = coordinator.execute()
+
+        self.assertEqual(manifest["parameters"]["owner_logical_client_id"], reserved[0])
+        self.assertEqual(manifest["logical_client_ids"], list(reserved))
+
+    def test_preferred_and_planned_contents_are_executed_exactly(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RUNNER.ScenarioCoordinator(
+                clients=[self.clients[70]],
+                executor=FakeExecutor(),
+                scenario_id="A2",
+                seed=12345,
+                smoke=True,
+                dataset_prefix="tnsm_100lc_20260826_smoke",
+                output_dir=Path(temp_dir),
+                variant="stealth",
+                content_ids=("video_10", "video_11", "video_12"),
+                preferred_content_ids=("video_12", "video_10", "video_11"),
+                planned_content_ids=("video_12", "video_10"),
+            )
+            manifest, _ = coordinator.execute()
+
+        self.assertEqual(manifest["parameters"]["content_ids"], ["video_12", "video_10"])
+        self.assertEqual(
+            {item["content_id"] for item in manifest["token_bindings"]},
+            {"video_10", "video_12"},
+        )
+
     def test_long_view_uses_only_long_content_inside_the_reserved_pool(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             coordinator = RUNNER.ScenarioCoordinator(

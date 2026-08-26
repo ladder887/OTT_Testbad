@@ -319,6 +319,51 @@ class DatasetAuditTest(unittest.TestCase):
         self.assertEqual(report["high_auc_features"], ["feature_proxy"])
         self.assertEqual(report["constant_features"], ["feature_constant"])
 
+    def test_rejects_class_exclusive_collection_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dataset = Path(temp_dir) / "dataset.csv"
+            columns = [
+                "sample_id",
+                "run_id",
+                "scenario_id",
+                "label_binary",
+                "cdn_token_id",
+                "physical_host_id",
+                "content_id",
+                "content_type",
+                "edge_id",
+                "network_profile_id",
+                "feature_value",
+            ]
+            with dataset.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=columns)
+                writer.writeheader()
+                for index, label in enumerate((0, 0, 1, 1)):
+                    writer.writerow(
+                        {
+                            "sample_id": f"sample_{index}",
+                            "run_id": f"run_{index}",
+                            "scenario_id": "N1" if label == 0 else "A1",
+                            "label_binary": label,
+                            "cdn_token_id": f"cdn_{index}",
+                            "physical_host_id": "pi01",
+                            "content_id": "video_01" if label == 0 else "video_02",
+                            "content_type": "vod",
+                            "edge_id": "edge-kr",
+                            "network_profile_id": "P0",
+                            "feature_value": index,
+                        }
+                    )
+            dataset.with_suffix(".metadata.json").write_text(
+                json.dumps({"row_count": 4, "feature_columns": ["feature_value"]}),
+                encoding="utf-8",
+            )
+
+            report = DATASET.audit(dataset, 0.95)
+
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("content_id has class-exclusive values" in item for item in report["errors"]))
+
 
 class EdgeCachePairValidationTest(unittest.TestCase):
     def test_accepts_matching_miss_then_hit_pair(self):

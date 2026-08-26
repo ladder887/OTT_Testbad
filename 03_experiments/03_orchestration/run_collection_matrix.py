@@ -115,7 +115,7 @@ def resolve_repo_path(value: str) -> Path:
 
 def load_matrix(path: Path) -> dict[str, Any]:
     matrix = json.loads(path.read_text(encoding="utf-8"))
-    if matrix.get("schema_version") != 1 or not matrix.get("matrix_id"):
+    if matrix.get("schema_version") not in {1, 2} or not matrix.get("matrix_id"):
         raise MatrixExecutionError("unsupported or incomplete collection matrix")
     run_keys: set[str] = set()
     for batch in matrix.get("batches", []):
@@ -128,6 +128,24 @@ def load_matrix(path: Path) -> dict[str, Any]:
             ids = [str(item) for item in run.get("reserved_client_ids", [])]
             if len(ids) != int(run.get("required_client_count") or 0) or len(ids) != len(set(ids)):
                 raise MatrixExecutionError(f"{run_key}: invalid logical-client reservation")
+            if matrix.get("schema_version") == 2:
+                allowed = [str(item) for item in run.get("allowed_content_ids", [])]
+                preferred = [str(item) for item in run.get("preferred_content_ids", [])]
+                planned = [str(item) for item in run.get("planned_content_ids", [])]
+                planned_counts = run.get("planned_content_session_counts", {})
+                contributions = run.get("client_session_contributions", [])
+                if (
+                    not allowed
+                    or len(preferred) != len(allowed)
+                    or set(preferred) != set(allowed)
+                    or not planned
+                    or not set(planned).issubset(set(allowed))
+                    or set(planned_counts) != set(planned)
+                    or sum(int(value) for value in planned_counts.values())
+                    != int(run.get("planned_session_count") or 0)
+                    or len(contributions) != len(ids)
+                ):
+                    raise MatrixExecutionError(f"{run_key}: incomplete schema-v2 execution plan")
             overlap = set(ids).intersection(batch_clients)
             if overlap:
                 raise MatrixExecutionError(f"{batch.get('batch_id')}: overlapping clients {sorted(overlap)}")
@@ -303,6 +321,10 @@ def execute_one_run(
         ",".join(run["reserved_client_ids"]),
         "--content-ids",
         ",".join(run["allowed_content_ids"]),
+        "--preferred-content-ids",
+        ",".join(run.get("preferred_content_ids", [])),
+        "--planned-content-ids",
+        ",".join(run.get("planned_content_ids", [])),
         "--data-split",
         run["data_split"],
         "--matrix-id",
