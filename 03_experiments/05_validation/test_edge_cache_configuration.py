@@ -73,6 +73,10 @@ class EdgeCacheConfigurationTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("Validate the bind-mounted Origin Nginx configuration", playbook)
+        self.assertIn(
+            "argv: [docker, compose, up, -d, --force-recreate, origin-nginx]",
+            playbook,
+        )
         self.assertIn("argv: [docker, exec, ott-origin-nginx, nginx, -t]", playbook)
         self.assertIn("argv: [docker, exec, ott-origin-nginx, nginx, -s, reload]", playbook)
 

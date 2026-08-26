@@ -119,6 +119,12 @@
         chdir: "{{ project_root }}/{{ deployment_path }}"
       changed_when: true
 
+    - name: Recreate Origin Nginx to refresh its single-file bind mount
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, --force-recreate, origin-nginx]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
     - name: Validate the bind-mounted Origin Nginx configuration
       ansible.builtin.command:
         argv: [docker, exec, ott-origin-nginx, nginx, -t]
