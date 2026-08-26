@@ -147,7 +147,7 @@ main matrix 전체에 `run_collection_matrix.py --all-batches`를 직접 쓰지 
 
 ```bash
 python3 03_experiments/03_orchestration/run_collection_campaign.py \
-  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
   --split train
 ```
 
@@ -155,7 +155,7 @@ python3 03_experiments/03_orchestration/run_collection_campaign.py \
 
 ```bash
 python3 03_experiments/03_orchestration/run_collection_campaign.py \
-  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
   --split train \
   --max-batches 1 \
   --execute

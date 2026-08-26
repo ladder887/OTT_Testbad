@@ -865,13 +865,21 @@ cd ~/OTT_Testbad
 tmux new -s ott-main
 
 python3 03_experiments/03_orchestration/run_collection_campaign.py \
-  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
   --split train \
   --max-batches 1 \
   --execute
 ```
 
-첫 batch가 통과하면 같은 `tmux` 안에서 `--max-batches 1`을 뺀 명령을 실행한다.
+첫 batch가 통과하면 같은 `tmux` 안에서 아래처럼 `--max-batches 1`만 빼고 실행한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_campaign.py \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
+  --split train \
+  --execute
+```
+
 `Ctrl+b`를 누른 뒤 손을 떼고 `d`를 누르면 작업을 종료하지 않고 terminal만 빠져나온다.
 다시 화면을 볼 때는 다음 명령을 사용한다.
 
