@@ -189,7 +189,9 @@ def expand_manifest_paths(values: list[str]) -> list[Path]:
     unique: list[Path] = []
     for path in paths:
         resolved = path.resolve()
-        if resolved.name.endswith(".validation.json") or resolved in unique:
+        if resolved.name.endswith(
+            (".validation.json", ".execution.json", ".campaign_state.json")
+        ) or resolved in unique:
             continue
         unique.append(resolved)
     if not unique:

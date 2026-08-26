@@ -22,6 +22,17 @@ CACHE = load_module("validate_edge_cache_pair")
 
 
 class CollectionAuditTest(unittest.TestCase):
+    def test_manifest_expansion_ignores_campaign_control_reports(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "20260827_run.json"
+            manifest.write_text("{}", encoding="utf-8")
+            (root / "20260827_run.validation.json").write_text("{}", encoding="utf-8")
+            (root / "matrix.execution.json").write_text("{}", encoding="utf-8")
+            (root / "matrix.campaign_state.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(COLLECTION.expand_manifest_paths([str(root)]), [manifest.resolve()])
+
     def test_hard_negative_gate_accepts_all_required_pairs(self):
         client = {
             "logical_client_id": "lc001",

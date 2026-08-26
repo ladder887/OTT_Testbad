@@ -20,6 +20,17 @@ EXPORTER = load_exporter_module()
 
 
 class SessionDatasetExportTest(unittest.TestCase):
+    def test_manifest_resolution_ignores_campaign_control_reports(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "20260827_run.json"
+            manifest.write_text("{}", encoding="utf-8")
+            (root / "20260827_run.validation.json").write_text("{}", encoding="utf-8")
+            (root / "matrix.execution.json").write_text("{}", encoding="utf-8")
+            (root / "matrix.campaign_state.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(EXPORTER.expand_manifest_paths([str(root)]), [manifest.resolve()])
+
     def test_manifest_split_provenance_is_kept_outside_feature_columns(self):
         manifest = {
             "status": "completed",

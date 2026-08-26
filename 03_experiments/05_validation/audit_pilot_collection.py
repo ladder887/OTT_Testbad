@@ -71,7 +71,9 @@ def expand_manifest_paths(values: list[str]) -> list[Path]:
         {
             path.resolve()
             for path in paths
-            if not path.name.endswith(".validation.json")
+            if not path.name.endswith(
+                (".validation.json", ".execution.json", ".campaign_state.json")
+            )
         }
     )
     if not resolved:
