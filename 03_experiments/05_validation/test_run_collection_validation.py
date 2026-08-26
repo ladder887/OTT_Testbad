@@ -52,6 +52,7 @@ class RunCollectionValidationTest(unittest.TestCase):
                 "token_id": token_id,
                 "viewing_session_count": 2,
                 "client_ips": ["192.168.0.151", "192.168.0.152"],
+                "segment_client_ips": ["192.168.0.151", "192.168.0.152"],
                 "device_ids": ["device_a", "device_b"],
                 "segment_requests": 2,
             }
@@ -66,6 +67,51 @@ class RunCollectionValidationTest(unittest.TestCase):
         )
 
         self.assertTrue(report["passed"])
+
+    def test_consumer_without_graph_segment_requests_fails_validation(self):
+        token_jti = "22222222-2222-4222-8222-222222222222"
+        token_id = f"cdn_{hashlib.sha256(token_jti.encode()).hexdigest()[:24]}"
+        manifest = {
+            "run_id": "run_n1",
+            "scenario_id": "N1",
+            "token_bindings": [
+                {
+                    "token_jti": token_jti,
+                    "cdn_token_id": token_id,
+                    "consumer_logical_client_ids": ["lc001"],
+                }
+            ],
+        }
+        documents = [
+            {"event_source": "ott-api", "event_kind": "token_issued", "cdn_token_id": token_id},
+            {
+                "event_source": "edge-nginx",
+                "request_uri": "/hls/video_01/720p/seg_1.ts",
+                "cdn_token_id": token_id,
+                "client_ip": "192.168.0.151",
+            },
+        ]
+        graph = [
+            {
+                "token_id": token_id,
+                "viewing_session_count": 1,
+                "client_ips": ["192.168.0.151"],
+                "segment_client_ips": [],
+                "device_ids": ["device_a"],
+                "segment_requests": 0,
+            }
+        ]
+
+        report = VALIDATOR.analyze(
+            manifest,
+            documents,
+            graph,
+            [],
+            {"lc001": "192.168.0.151"},
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("no Neo4j segment requests" in item for item in report["errors"]))
 
     def test_raw_label_field_fails_validation(self):
         report = VALIDATOR.analyze(

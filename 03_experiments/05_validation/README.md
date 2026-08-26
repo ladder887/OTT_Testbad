@@ -54,5 +54,6 @@ python3 03_experiments/05_validation/validate_run_collection.py \
   --wait-sec 120
 ```
 
-Graph Pipeline 반영을 최대 120초 기다린다. `passed: true`가 아니면 해당 run을 dataset에
-넣지 않는다. A1/A7은 실제 HLS source IP와 device가 각각 2개 이상인지 추가로 검사한다.
+Graph Pipeline 반영을 최대 120초 기다린다. 각 예상 consumer IP에 segment request가
+연결되고 `passed: true`가 된 run만 dataset에 넣는다. A1/A7은 실제 HLS source IP와
+device가 각각 2개 이상인지 추가로 검사한다.

@@ -107,6 +107,9 @@ def query_neo4j(
     RETURN token_id,
            count(DISTINCT session) AS viewing_session_count,
            collect(DISTINCT ip.ip_address) AS client_ips,
+           collect(DISTINCT CASE
+               WHEN coalesce(session.total_segment_requests, 0) > 0 THEN ip.ip_address
+           END) AS segment_client_ips,
            collect(DISTINCT device.device_id) AS device_ids,
            sum(coalesce(session.total_segment_requests, 0)) AS segment_requests
     ORDER BY token_id
@@ -222,6 +225,14 @@ def analyze(
         graph_ips = {str(item) for item in (graph.get("client_ips") or []) if item}
         if not expected_ips.issubset(graph_ips):
             errors.append(f"{token_id}: expected consumer IPs are missing in Neo4j: {sorted(expected_ips - graph_ips)}")
+        graph_segment_ips = {
+            str(item) for item in (graph.get("segment_client_ips") or []) if item
+        }
+        if not expected_ips.issubset(graph_segment_ips):
+            errors.append(
+                f"{token_id}: expected consumers have no Neo4j segment requests: "
+                f"{sorted(expected_ips - graph_segment_ips)}"
+            )
         token_reports.append(
             {
                 "cdn_token_id": token_id,
@@ -233,6 +244,7 @@ def analyze(
                 "neo4j_viewing_sessions": int(graph.get("viewing_session_count") or 0),
                 "neo4j_segment_requests": int(graph.get("segment_requests") or 0),
                 "neo4j_ips": sorted(graph_ips),
+                "neo4j_segment_ips": sorted(graph_segment_ips),
                 "neo4j_device_count": len([item for item in (graph.get("device_ids") or []) if item]),
             }
         )
