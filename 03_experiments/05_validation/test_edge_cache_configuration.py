@@ -36,6 +36,7 @@ class EdgeCacheConfigurationTest(unittest.TestCase):
         self.assertIn("proxy_cache cdn_cache;", vod)
         self.assertIn('proxy_cache_key "$scheme$proxy_host$uri";', vod)
         self.assertRegex(vod, re.compile(r"proxy_cache_valid\s+200\s+206\s+60m;"))
+        self.assertNotIn("proxy_buffering off;", vod)
 
     def test_remote_edge_cache_contract(self):
         self.check_config(
@@ -46,6 +47,21 @@ class EdgeCacheConfigurationTest(unittest.TestCase):
         self.check_config(
             REPOSITORY_ROOT / "01_platform" / "02_access_gateway" / "nginx.conf"
         )
+
+    def test_origin_distinguishes_rolling_playlists_from_immutable_media(self):
+        config = (REPOSITORY_ROOT / "01_platform" / "01_origin" / "nginx.conf").read_text(
+            encoding="utf-8"
+        )
+        live_manifest = location_body(
+            config,
+            "location ~ ^/hls/live_.*/(master\\.m3u8|.*/playlist\\.m3u8)$",
+        )
+        live_segment = location_body(config, "location ~ ^/hls/live_.*/.*/seg_.*\\.ts$")
+        vod = location_body(config, "location /hls")
+
+        self.assertIn('Cache-Control "no-store, no-cache, must-revalidate"', live_manifest)
+        self.assertIn('Cache-Control "public, max-age=300, immutable"', live_segment)
+        self.assertIn('Cache-Control "public, max-age=3600, immutable"', vod)
 
 
 if __name__ == "__main__":
