@@ -70,9 +70,15 @@ class GraphPipeline:
             ".ds-access-gateway-nginx-*,.ds-scrubber-nginx-*,.ds-filebeat-*",
         )
         self.es_poll_size = int(os.getenv("ES_POLL_SIZE", "500"))
+        self.es_allowed_lateness_sec = max(
+            0,
+            int(os.getenv("ES_ALLOWED_LATENESS_SEC", "180")),
+        )
+        self.es_scroll_keepalive = os.getenv("ES_SCROLL_KEEPALIVE", "1m")
         self.es_default_start_timestamp = os.getenv("ES_START_TIMESTAMP", "1970-01-01T00:00:00Z")
         self.es_last_timestamp = self.es_default_start_timestamp
         self.es_seen_ids_at_last_timestamp = set()
+        self.es_seen_documents = {}
         self.state_file = os.getenv(
             "GRAPH_PIPELINE_STATE_FILE",
             "/var/lib/graph-pipeline/checkpoint.json",
@@ -126,6 +132,18 @@ class GraphPipeline:
                     for doc_id in state.get("es_seen_ids_at_last_timestamp", [])
                     if doc_id
                 }
+                saved_documents = state.get("es_seen_documents", {})
+                if isinstance(saved_documents, dict):
+                    self.es_seen_documents = {
+                        str(doc_id): str(doc_timestamp)
+                        for doc_id, doc_timestamp in saved_documents.items()
+                        if doc_id and self._normalize_iso_timestamp(doc_timestamp)
+                    }
+                if not self.es_seen_documents:
+                    self.es_seen_documents = {
+                        str(doc_id): self.es_last_timestamp
+                        for doc_id in self.es_seen_ids_at_last_timestamp
+                    }
 
             logger.info(f"Loaded Graph Pipeline checkpoint from {self.state_file}")
         except Exception as exc:
@@ -141,17 +159,24 @@ class GraphPipeline:
             self.pending_file_position = None
 
         if self.pending_es_cursor is not None:
-            timestamp, seen_ids = self.pending_es_cursor
+            timestamp, seen_documents = self.pending_es_cursor
             self.es_last_timestamp = timestamp
-            self.es_seen_ids_at_last_timestamp = set(seen_ids)
+            self.es_seen_documents = dict(seen_documents)
+            self.es_seen_ids_at_last_timestamp = {
+                doc_id
+                for doc_id, doc_timestamp in self.es_seen_documents.items()
+                if doc_timestamp == timestamp
+            }
             self.pending_es_cursor = None
 
         state = {
-            "schema_version": 1,
+            "schema_version": 2,
             "source": self.log_source,
             "file_position": self.last_position,
             "es_last_timestamp": self.es_last_timestamp,
             "es_seen_ids_at_last_timestamp": sorted(self.es_seen_ids_at_last_timestamp),
+            "es_seen_documents": dict(sorted(self.es_seen_documents.items())),
+            "es_allowed_lateness_sec": self.es_allowed_lateness_sec,
             "committed_at": datetime.utcnow().isoformat() + "Z",
         }
 
@@ -537,6 +562,75 @@ class GraphPipeline:
                 return candidate
         return None
 
+    def _elasticsearch_query_start(self):
+        cursor_time = self._parse_event_datetime(self.es_last_timestamp)
+        if cursor_time is None or self.es_allowed_lateness_sec <= 0:
+            return self.es_last_timestamp
+        return (
+            cursor_time - timedelta(seconds=self.es_allowed_lateness_sec)
+        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    @classmethod
+    def _latest_iso_timestamp(cls, values, fallback):
+        candidates = []
+        for value in values:
+            parsed = cls._parse_event_datetime(value)
+            if parsed is not None:
+                candidates.append((parsed, value))
+        if not candidates:
+            return fallback
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def _prune_es_seen_documents(self, seen_documents, watermark):
+        watermark_time = self._parse_event_datetime(watermark)
+        if watermark_time is None:
+            return dict(seen_documents)
+        cutoff = watermark_time - timedelta(seconds=self.es_allowed_lateness_sec)
+        return {
+            doc_id: doc_timestamp
+            for doc_id, doc_timestamp in seen_documents.items()
+            if (
+                (parsed := self._parse_event_datetime(doc_timestamp)) is not None
+                and parsed >= cutoff
+            )
+        }
+
+    @staticmethod
+    def _elasticsearch_total_hits(result):
+        hit_info = result.get("hits", {}).get("total", 0)
+        return int(hit_info.get("value", 0)) if isinstance(hit_info, dict) else int(hit_info or 0)
+
+    def _drain_elasticsearch_scroll(self, result):
+        hits = list(result.get("hits", {}).get("hits", []))
+        total_hits = self._elasticsearch_total_hits(result)
+        scroll_id = result.get("_scroll_id")
+        try:
+            while scroll_id and len(hits) < total_hits:
+                page = self.es_client.scroll(
+                    scroll_id=scroll_id,
+                    scroll=self.es_scroll_keepalive,
+                )
+                page_hits = list(page.get("hits", {}).get("hits", []))
+                if not page_hits:
+                    break
+                hits.extend(page_hits)
+                scroll_id = page.get("_scroll_id") or scroll_id
+        finally:
+            if scroll_id:
+                try:
+                    self.es_client.clear_scroll(scroll_id=scroll_id)
+                except Exception as exc:
+                    logger.debug(f"Elasticsearch scroll cleanup failed: {exc}")
+        if len(hits) < total_hits:
+            logger.warning(
+                f"Elasticsearch scroll returned {len(hits)} of {total_hits} matching documents"
+            )
+        copied = dict(result)
+        copied_hits = dict(result.get("hits", {}))
+        copied_hits["hits"] = hits
+        copied["hits"] = copied_hits
+        return copied
+
     def parse_nginx_log(self, log_line):
         """Nginx JSON 로그 파싱"""
         try:
@@ -804,6 +898,7 @@ class GraphPipeline:
             logger.info(
                 f"ES search target resolved: patterns={configured_patterns}, resolved_count={len(resolved_indices)}"
             )
+            query_start = self._elasticsearch_query_start()
 
             result = self.es_client.search(
                 index=search_target,
@@ -812,6 +907,7 @@ class GraphPipeline:
                 allow_no_indices=True,
                 ignore_unavailable=True,
                 expand_wildcards="all",
+                scroll=self.es_scroll_keepalive,
                 sort=[
                     {"@timestamp": {"order": "asc", "unmapped_type": "date", "missing": "_last"}},
                     {"_doc": {"order": "asc"}},
@@ -819,23 +915,20 @@ class GraphPipeline:
                 query={
                     "range": {
                         "@timestamp": {
-                            "gte": self.es_last_timestamp,
+                            "gte": query_start,
                         }
                     }
                 },
             )
+            result = self._drain_elasticsearch_scroll(result)
 
-            hit_info = result.get("hits", {}).get("total", 0)
-            if isinstance(hit_info, dict):
-                total_hits = hit_info.get("value", 0)
-            else:
-                total_hits = hit_info
+            total_hits = self._elasticsearch_total_hits(result)
 
             count_value = 0
             if total_hits == 0:
                 logger.warning(
                     "No Elasticsearch hits found for "
-                    f"index='{search_target}' and @timestamp>={self.es_last_timestamp}"
+                    f"index='{search_target}' and @timestamp>={query_start}"
                 )
 
                 try:
@@ -862,18 +955,16 @@ class GraphPipeline:
                         allow_no_indices=True,
                         ignore_unavailable=True,
                         expand_wildcards="all",
+                        scroll=self.es_scroll_keepalive,
                         sort=[
                             {"@timestamp": {"order": "asc", "unmapped_type": "date", "missing": "_last"}},
                             {"_doc": {"order": "asc"}},
                         ],
                         query={"match_all": {}},
                     )
+                    bootstrap = self._drain_elasticsearch_scroll(bootstrap)
 
-                    bootstrap_hit_info = bootstrap.get("hits", {}).get("total", 0)
-                    if isinstance(bootstrap_hit_info, dict):
-                        bootstrap_total_hits = bootstrap_hit_info.get("value", 0)
-                    else:
-                        bootstrap_total_hits = bootstrap_hit_info
+                    bootstrap_total_hits = self._elasticsearch_total_hits(bootstrap)
 
                     if bootstrap_total_hits > 0:
                         logger.warning(
@@ -894,15 +985,13 @@ class GraphPipeline:
                         allow_no_indices=True,
                         ignore_unavailable=True,
                         expand_wildcards="all",
+                        scroll=self.es_scroll_keepalive,
                         sort=[{"_doc": {"order": "asc"}}],
                         query={"match_all": {}},
                     )
+                    id_fallback = self._drain_elasticsearch_scroll(id_fallback)
 
-                    id_hit_info = id_fallback.get("hits", {}).get("total", 0)
-                    if isinstance(id_hit_info, dict):
-                        id_total_hits = id_hit_info.get("value", 0)
-                    else:
-                        id_total_hits = id_hit_info
+                    id_total_hits = self._elasticsearch_total_hits(id_fallback)
 
                     if id_total_hits > 0:
                         logger.warning(
@@ -913,9 +1002,14 @@ class GraphPipeline:
                         total_hits = id_total_hits
 
             processed_docs = []
+            newly_seen_documents = {}
+            known_document_ids = set(self.es_seen_documents)
+            sample_new_source = None
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
                 doc_id = hit.get("_id")
+                doc_index = hit.get("_index", "")
+                document_key = f"{doc_index}:{doc_id}" if doc_index else str(doc_id)
                 doc_ts = self._normalize_iso_timestamp(
                     source.get("@timestamp") or source.get("timestamp") or source.get("event.created")
                 )
@@ -926,21 +1020,37 @@ class GraphPipeline:
                 if not doc_ts:
                     doc_ts = datetime.utcnow().isoformat() + "Z"
 
-                if doc_ts == self.es_last_timestamp and doc_id in self.es_seen_ids_at_last_timestamp:
+                if document_key in known_document_ids:
                     continue
+                known_document_ids.add(document_key)
+                newly_seen_documents[document_key] = doc_ts
+                if sample_new_source is None:
+                    sample_new_source = source
 
                 parsed = self.parse_nginx_log(source)
                 if parsed:
-                    processed_docs.append((doc_ts, doc_id, parsed))
+                    processed_docs.append((doc_ts, document_key, parsed))
+
+            if newly_seen_documents:
+                seen_documents = dict(self.es_seen_documents)
+                seen_documents.update(newly_seen_documents)
+                latest_ts = self._latest_iso_timestamp(
+                    [self.es_last_timestamp, *newly_seen_documents.values()],
+                    self.es_last_timestamp,
+                )
+                self.pending_es_cursor = (
+                    latest_ts,
+                    self._prune_es_seen_documents(seen_documents, latest_ts),
+                )
 
             if not processed_docs:
-                if total_hits > 0:
-                    sample_hit = (result.get("hits", {}).get("hits", []) or [{}])[0]
-                    sample_source = sample_hit.get("_source", {}) if isinstance(sample_hit, dict) else {}
-                    sample_keys = list(sample_source.keys())[:20] if isinstance(sample_source, dict) else []
-                    sample_message = sample_source.get("message") if isinstance(sample_source, dict) else None
+                if newly_seen_documents:
+                    sample_source = sample_new_source if isinstance(sample_new_source, dict) else {}
+                    sample_keys = list(sample_source.keys())[:20]
+                    sample_message = sample_source.get("message")
                     logger.warning(
-                        f"Elasticsearch returned {total_hits} hits but no parsable documents were produced"
+                        f"Elasticsearch returned {len(newly_seen_documents)} new hits "
+                        "but no parsable documents were produced"
                     )
                     if sample_keys:
                         logger.warning(f"Sample _source keys: {sample_keys}")
@@ -951,13 +1061,6 @@ class GraphPipeline:
 
             for _, _, parsed in processed_docs:
                 logs.append(parsed)
-
-            latest_ts = processed_docs[-1][0]
-            latest_ids = {doc_id for doc_ts, doc_id, _ in processed_docs if doc_ts == latest_ts}
-
-            if latest_ts == self.es_last_timestamp:
-                latest_ids |= self.es_seen_ids_at_last_timestamp
-            self.pending_es_cursor = (latest_ts, latest_ids)
 
             logger.info(f"Read {len(logs)} new log entries from Elasticsearch")
             return logs

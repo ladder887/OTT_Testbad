@@ -539,6 +539,11 @@ python3 03_experiments/05_validation/validate_telemetry_contract.py \
 - 두 Elasticsearch 대상에 document 존재
 - 두 Kibana data view에서 document 조회 가능
 
+Graph Pipeline은 여러 Edge 로그가 Elasticsearch에 순서가 뒤섞여 도착하는 상황을
+처리하기 위해 최근 180초를 겹쳐 읽고 `_index:_id`로 중복을 제거한다. 개별 run의
+`validate_run_collection.py`가 시간 내 통과하지 않으면 단순 대기 완료로 보지 말고,
+Elasticsearch에는 있으나 Neo4j에 없는 token/request가 있는지 확인한다.
+
 ### 12.5 정식 수집 전 기존 로그 초기화
 
 이 작업은 VOD/LIVE 업로드와 전체 통신 검증을 마친 뒤, 정상·공격 시청 데이터를 처음

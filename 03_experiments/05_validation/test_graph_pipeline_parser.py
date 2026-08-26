@@ -75,12 +75,110 @@ class FakeDriver:
         return self.fake_session
 
 
+class FakeElasticsearchCat:
+    def indices(self, **_kwargs):
+        return [{"index": "access-gateway-nginx-test"}]
+
+
+class FakeElasticsearch:
+    def __init__(self, responses, scroll_responses=None):
+        self.responses = list(responses)
+        self.scroll_responses = list(scroll_responses or [])
+        self.search_calls = []
+        self.scroll_calls = []
+        self.cleared_scroll_ids = []
+        self.cat = FakeElasticsearchCat()
+
+    def search(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return self.responses.pop(0)
+
+    def scroll(self, **kwargs):
+        self.scroll_calls.append(kwargs)
+        return self.scroll_responses.pop(0)
+
+    def clear_scroll(self, scroll_id):
+        self.cleared_scroll_ids.append(scroll_id)
+
+
 class GraphPipelineParserTest(unittest.TestCase):
     def setUp(self):
         self.pipeline = GraphPipeline.__new__(GraphPipeline)
         self.pipeline.neo4j_database = "neo4j"
         self.pipeline.viewing_session_idle_timeout_sec = 120
         self.pipeline.live_viewing_session_idle_timeout_sec = 45
+
+    def test_elasticsearch_cursor_recovers_late_arriving_edge_document(self):
+        newer_hit = {
+            "_index": "access-gateway-nginx-test",
+            "_id": "newer",
+            "_source": {
+                "@timestamp": "2026-08-26T10:00:10.000Z",
+                "parsed": {"timestamp": "2026-08-26T10:00:10.000Z", "id": "newer"},
+            },
+            "sort": ["2026-08-26T10:00:10.000Z", 1],
+        }
+        late_hit = {
+            "_index": "access-gateway-nginx-test",
+            "_id": "late",
+            "_source": {
+                "@timestamp": "2026-08-26T10:00:05.000Z",
+                "parsed": {"timestamp": "2026-08-26T10:00:05.000Z", "id": "late"},
+            },
+            "sort": ["2026-08-26T10:00:05.000Z", 0],
+        }
+        self.pipeline.es_client = FakeElasticsearch(
+            [
+                {"hits": {"total": {"value": 1}, "hits": [newer_hit]}},
+                {"hits": {"total": {"value": 2}, "hits": [late_hit, newer_hit]}},
+            ]
+        )
+        self.pipeline.elasticsearch_index = "access-gateway-nginx-*"
+        self.pipeline.es_poll_size = 5000
+        self.pipeline.es_default_start_timestamp = "1970-01-01T00:00:00Z"
+        self.pipeline.es_last_timestamp = self.pipeline.es_default_start_timestamp
+        self.pipeline.es_allowed_lateness_sec = 180
+        self.pipeline.es_scroll_keepalive = "1m"
+        self.pipeline.es_seen_ids_at_last_timestamp = set()
+        self.pipeline.es_seen_documents = {}
+        self.pipeline.pending_es_cursor = None
+        self.pipeline.parse_nginx_log = lambda source: source.get("parsed")
+
+        first = self.pipeline._read_new_logs_from_elasticsearch()
+        self.assertEqual([item["id"] for item in first], ["newer"])
+        self.pipeline.es_last_timestamp, self.pipeline.es_seen_documents = self.pipeline.pending_es_cursor
+        self.pipeline.pending_es_cursor = None
+
+        second = self.pipeline._read_new_logs_from_elasticsearch()
+
+        self.assertEqual([item["id"] for item in second], ["late"])
+        second_query_start = self.pipeline.es_client.search_calls[1]["query"]["range"]["@timestamp"]["gte"]
+        self.assertEqual(second_query_start, "2026-08-26T09:57:10.000Z")
+        self.assertEqual(self.pipeline.pending_es_cursor[0], "2026-08-26T10:00:10.000Z")
+
+    def test_elasticsearch_scroll_reads_every_matching_document(self):
+        first_hit = {"_id": "one", "_source": {"@timestamp": "2026-08-26T10:00:00.000Z"}}
+        second_hit = {"_id": "two", "_source": {"@timestamp": "2026-08-26T10:00:01.000Z"}}
+        self.pipeline.es_scroll_keepalive = "1m"
+        self.pipeline.es_client = FakeElasticsearch(
+            [],
+            scroll_responses=[
+                {
+                    "_scroll_id": "scroll-2",
+                    "hits": {"total": {"value": 2}, "hits": [second_hit]},
+                }
+            ],
+        )
+
+        result = self.pipeline._drain_elasticsearch_scroll(
+            {
+                "_scroll_id": "scroll-1",
+                "hits": {"total": {"value": 2}, "hits": [first_hit]},
+            }
+        )
+
+        self.assertEqual([item["_id"] for item in result["hits"]["hits"]], ["one", "two"])
+        self.assertEqual(self.pipeline.es_client.cleared_scroll_ids, ["scroll-2"])
 
     def test_query_real_ip_cannot_override_edge_observed_client_ip(self):
         parsed = self.pipeline.parse_nginx_log(
