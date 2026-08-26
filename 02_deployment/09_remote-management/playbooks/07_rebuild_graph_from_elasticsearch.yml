@@ -1,0 +1,180 @@
+---
+- name: Confirm the Neo4j-only rebuild scope
+  hosts: analysis_storage:graph_processing
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Require explicit confirmation and both graph hosts
+      ansible.builtin.assert:
+        that:
+          - rebuild_graph_from_elasticsearch | default(false) | bool
+          - (groups['analysis_storage'] | difference(ansible_play_hosts_all) | length) == 0
+          - (groups['graph_processing'] | difference(ansible_play_hosts_all) | length) == 0
+        fail_msg: >-
+          This deletes Neo4j experiment data and rebuilds it from the retained
+          Elasticsearch logs. Run without --limit and pass
+          -e rebuild_graph_from_elasticsearch=true.
+      run_once: true
+
+- name: Read the retained Elasticsearch boundary
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Read experiment document count and latest timestamp
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*/_search?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all"
+        method: POST
+        body_format: json
+        body:
+          size: 0
+          track_total_hits: true
+          aggs:
+            latest_event:
+              max:
+                field: "@timestamp"
+                format: strict_date_time
+        status_code: 200
+        return_content: true
+      register: retained_events
+
+    - name: Require retained source events
+      ansible.builtin.assert:
+        that:
+          - (retained_events.json.hits.total.value | int) > 0
+          - retained_events.json.aggregations.latest_event.value_as_string | default('') | length > 0
+        fail_msg: Elasticsearch contains no events that can rebuild Neo4j.
+
+    - name: Publish the replay boundary
+      ansible.builtin.set_fact:
+        replay_document_count: "{{ retained_events.json.hits.total.value | int }}"
+        replay_latest_timestamp: "{{ retained_events.json.aggregations.latest_event.value_as_string }}"
+
+- name: Stop graph ingestion and reset its cursor
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Stop Graph Pipeline
+      ansible.builtin.command:
+        argv: [docker, compose, stop, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Remove the persisted Elasticsearch cursor
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - run
+          - --rm
+          - --no-deps
+          - --entrypoint
+          - /bin/sh
+          - graph-pipeline
+          - -c
+          - rm -f /var/lib/graph-pipeline/checkpoint.json
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+- name: Delete only the derived Neo4j graph
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load closed-lab settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
+
+  tasks:
+    - name: Delete all graph nodes and relationships
+      ansible.builtin.uri:
+        url: http://127.0.0.1:7474/db/neo4j/tx/commit
+        method: POST
+        url_username: neo4j
+        url_password: "{{ lab_settings.lab_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: MATCH (n) DETACH DELETE n
+        status_code: 200
+        return_content: true
+      register: neo4j_delete
+      failed_when: (neo4j_delete.json.errors | default([]) | length) > 0
+      no_log: true
+
+- name: Rebuild Neo4j from the retained Elasticsearch events
+  hosts: graph_processing
+  gather_facts: false
+  become: false
+  vars:
+    storage_host: "{{ groups['analysis_storage'][0] }}"
+    replay_latest_timestamp: "{{ hostvars[storage_host].replay_latest_timestamp }}"
+
+  tasks:
+    - name: Start Graph Pipeline with an empty checkpoint
+      ansible.builtin.command:
+        argv: [docker, compose, up, -d, graph-pipeline]
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      changed_when: true
+
+    - name: Wait until the replay reaches the Elasticsearch boundary
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec ott-graph-pipeline-central
+          grep -F '"es_last_timestamp": "{{ replay_latest_timestamp }}"'
+          /var/lib/graph-pipeline/checkpoint.json
+        chdir: "{{ project_root }}/{{ deployment_path }}"
+      register: replay_checkpoint
+      changed_when: false
+      retries: 120
+      delay: 5
+      until: replay_checkpoint.rc == 0
+
+- name: Verify the rebuilt graph is populated
+  hosts: analysis_storage
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Load closed-lab settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/lab.yml"
+        name: lab_settings
+
+  tasks:
+    - name: Count rebuilt Request and ViewingSession nodes
+      ansible.builtin.uri:
+        url: http://127.0.0.1:7474/db/neo4j/tx/commit
+        method: POST
+        url_username: neo4j
+        url_password: "{{ lab_settings.lab_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: >-
+                CALL { MATCH (r:Request) RETURN count(r) AS requests }
+                CALL { MATCH (v:ViewingSession) RETURN count(v) AS sessions }
+                RETURN requests, sessions
+        status_code: 200
+        return_content: true
+      register: rebuilt_graph
+      no_log: true
+
+    - name: Require rebuilt requests and sessions
+      ansible.builtin.assert:
+        that:
+          - (rebuilt_graph.json.errors | default([]) | length) == 0
+          - (rebuilt_graph.json.results[0].data[0].row[0] | int) > 0
+          - (rebuilt_graph.json.results[0].data[0].row[1] | int) > 0
+        fail_msg: Graph Pipeline reached the cursor boundary but Neo4j is empty.
+        success_msg: >-
+          Neo4j was rebuilt from the retained Elasticsearch events without
+          deleting the source logs.
