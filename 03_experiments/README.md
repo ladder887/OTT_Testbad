@@ -53,6 +53,8 @@ TV 0.465와 network profile TV 0.369로 학습에서 제외했다. matrix v2로 
 `balanced02` calibration은 5개 batch, 42개 run, 95개 session(정상 45/공격 50)을
 생성했고 모든 run/ES/Neo4j 검증과 dataset/split 감사를 통과했다. content/Edge/network
 profile/physical host TV는 `0.118/0.047/0.082/0.056`이며 class 전용 범주는 없다.
-`segment_duplicate_ratio`와 `status_4xx_count`는 이번 수집에서 상수였다. main collection
-전 parameter와 feature 후보를 동결하고 독립 group/content/future split matrix를 만든다.
-smoke/pilot metric은 논문 분류 성능 결과에 사용하지 않는다.
+`segment_duplicate_ratio`와 `status_4xx_count`는 이번 수집에서 상수였다. parameter,
+feature 후보와 독립 group/content/future split을 동결한 `main_v1`은 2,550 runs와 계획
+5,483 segment-bearing sessions다. 첫 train batch는 20/20 run validation과 계획/실제
+60/60 session export를 통과했고 남은 train campaign을 실행 중이다. smoke/pilot metric과
+partial train metric은 논문 분류 성능 결과에 사용하지 않는다.
