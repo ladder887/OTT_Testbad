@@ -131,3 +131,48 @@ matrix runner는 batch의 split에 맞춰 Origin에서 `live_01`, `live_02`, `li
 channel 하나만 활성화한다. 시작한 channel의 1080p와 720p playlist가 실제로 진행되는지
 확인한 뒤 traffic을 시작한다. LIVE run이 없는 batch는 encoder를 모두 정지한다. 이를
 수동으로 우회하는 `--skip-live-management`는 장애 조사 외에는 사용하지 않는다.
+
+## 장시간 main campaign
+
+main matrix 전체에 `run_collection_matrix.py --all-batches`를 직접 쓰지 않는다. 이 명령은
+시작 시 gate를 한 번만 확인하므로 수십 시간 campaign에는 적합하지 않다.
+`run_collection_campaign.py`는 batch마다 다음 순서를 반복한다.
+
+1. control 포함 18개 node와 8개 endpoint gate 실행
+2. gate report 경로를 해당 batch runner에 명시적으로 전달
+3. scenario 실행과 run별 ES/Neo4j validation
+4. 통과한 batch와 execution report를 campaign state에 원자적으로 기록
+
+먼저 실행할 범위만 확인한다. 이 명령은 traffic을 만들지 않는다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_campaign.py \
+  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --split train
+```
+
+첫 production batch 하나만 실행해 상태 파일과 로그를 확인한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_campaign.py \
+  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --split train \
+  --max-batches 1 \
+  --execute
+```
+
+통과하면 `--max-batches`를 빼고 같은 명령을 다시 실행한다. 이미 통과한 batch는 state와
+execution report를 이용해 건너뛴다. train을 모두 끝낸 뒤 validation, 마지막 별도 날짜에
+test 순서로 실행한다. test 수집을 시작한 뒤 train을 추가하면 strict future split이
+깨지므로 새 연구 campaign으로 취급해야 한다.
+
+기본 state는 다음 위치에 생긴다.
+
+```text
+06_outputs/01_run_manifests/<dataset-prefix>/<matrix-id>.campaign_state.json
+```
+
+gate만 실패한 경우 같은 명령을 다시 실행해도 traffic 중복이 없다. scenario 실행 도중
+중단되거나 batch가 validation에 실패하면 일부 request/session이 이미 저장됐을 수 있다.
+이 경우 runner는 자동 재시도를 차단한다. 해당 prefix의 부분 데이터를 검토·정리한 뒤에만
+`--allow-partial-batch-retry`를 사용한다. 단순히 옵션을 붙여 중복 데이터를 만들지 않는다.

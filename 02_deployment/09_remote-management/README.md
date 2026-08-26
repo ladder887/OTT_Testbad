@@ -848,6 +848,46 @@ validation은 `live_02`, test는 `live_03`이다. 두 rendition의 media sequenc
 않으면 client traffic을 시작하지 않는다. 세 channel을 동시에 계속 켜면 Origin Pi 5가
 포화되므로 `playbooks/04_verify.yml`의 짧은 전체 rolling 검사 외에는 사용하지 않는다.
 
+### 장시간 main 수집은 campaign runner로 실행
+
+main은 수십~수백 batch이므로 위 단일-batch 명령을 사람이 반복하지 않는다. `ott-control`에
+한 번만 `tmux`를 설치한다.
+
+```bash
+sudo apt update
+sudo apt install -y tmux
+```
+
+`tmux` session을 만들고 그 안에서 campaign을 시작한다.
+
+```bash
+cd ~/OTT_Testbad
+tmux new -s ott-main
+
+python3 03_experiments/03_orchestration/run_collection_campaign.py \
+  --matrix 06_outputs/00_collection_plans/MAIN_MATRIX.json \
+  --split train \
+  --max-batches 1 \
+  --execute
+```
+
+첫 batch가 통과하면 같은 `tmux` 안에서 `--max-batches 1`을 뺀 명령을 실행한다.
+`Ctrl+b`를 누른 뒤 손을 떼고 `d`를 누르면 작업을 종료하지 않고 terminal만 빠져나온다.
+다시 화면을 볼 때는 다음 명령을 사용한다.
+
+```bash
+tmux attach -t ott-main
+```
+
+SSH가 끊겨도 `tmux` 안의 campaign은 계속 실행된다. campaign runner는 각 batch 직전에
+gate를 새로 만들고, batch 종료 후 state를 저장한다. 프로세스가 완전히 끝난 뒤 같은
+명령을 다시 실행하면 통과한 batch는 건너뛴다.
+
+실행 순서는 반드시 `train 전체 → validation 전체 → 별도 미래 날짜의 test 전체`다.
+validation과 test는 각각 `--split validation`, `--split test`로 바꾼다. scenario 실행 중
+중단된 batch는 부분 데이터가 남을 수 있어 자동 재시도되지 않는다. state의 마지막 attempt와
+execution report를 확인하기 전에는 `--allow-partial-batch-retry`를 붙이지 않는다.
+
 ## 18. dataset과 학습 smoke
 
 완료된 manifest와 Neo4j를 `cdn_token_id`로 결합한다.
