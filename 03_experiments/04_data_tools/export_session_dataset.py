@@ -86,7 +86,12 @@ FEATURE_COLUMNS = (
 METADATA_COLUMNS = (
     "sample_id",
     "run_id",
+    "dataset_prefix",
+    "data_split",
+    "collection_matrix_id",
+    "matrix_run_key",
     "scenario_id",
+    "scenario_variant",
     "attack_family",
     "label_binary",
     "cdn_token_id",
@@ -100,11 +105,18 @@ METADATA_COLUMNS = (
     "client_ip",
     "edge_id",
     "network_profile_id",
+    "cache_state",
+    "timing_scaled",
     "start_time",
     "end_time",
 )
 FORBIDDEN_MODEL_FIELDS = {
+    "dataset_prefix",
+    "data_split",
+    "collection_matrix_id",
+    "matrix_run_key",
     "scenario_id",
+    "scenario_variant",
     "attack_family",
     "label_binary",
     "run_id",
@@ -190,7 +202,8 @@ def load_manifests(paths: list[Path]) -> tuple[dict[str, dict[str, Any]], dict[s
         manifest = json.loads(path.read_text(encoding="utf-8"))
         if manifest.get("status") != "completed":
             continue
-        selected = manifest.get("parameters", {}).get("selected_clients", [])
+        parameters = manifest.get("parameters", {})
+        selected = parameters.get("selected_clients", [])
         for client in selected:
             source_ip = str(client.get("source_ip") or "")
             if source_ip:
@@ -208,9 +221,16 @@ def load_manifests(paths: list[Path]) -> tuple[dict[str, dict[str, Any]], dict[s
                 raise ExportError(f"duplicate token binding across manifests: {token_id}")
             token_labels[token_id] = {
                 "run_id": str(manifest.get("run_id") or ""),
+                "dataset_prefix": str(manifest.get("dataset_prefix") or ""),
+                "data_split": str(parameters.get("data_split") or ""),
+                "collection_matrix_id": str(parameters.get("collection_matrix_id") or ""),
+                "matrix_run_key": str(parameters.get("matrix_run_key") or ""),
                 "scenario_id": str(manifest.get("scenario_id") or ""),
+                "scenario_variant": str(parameters.get("scenario_variant") or ""),
                 "attack_family": str(manifest.get("attack_family") or ""),
                 "label_binary": 0 if str(manifest.get("scenario_id") or "").startswith("N") else 1,
+                "cache_state": str(parameters.get("cache_state") or ""),
+                "timing_scaled": bool(parameters.get("timing_scaled", False)),
             }
     if not token_labels:
         raise ExportError("completed manifests contain no token bindings")

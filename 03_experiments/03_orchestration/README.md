@@ -75,3 +75,54 @@ python3 03_experiments/03_orchestration/run_scenario.py \
 manifest에 기록한다. 이 옵션 자체가 Edge cache를 변경하지 않는다. cold run 전에는
 `playbooks/09_clear_edge_cache.yml`로 대상 Edge cache를 비우고, warm run 전에는 같은
 resource를 요청하는 별도 warm-up run을 수행한다.
+
+## 혼합 수집 matrix
+
+본 수집은 `run_scenario.py`를 여러 terminal에서 직접 실행하지 않는다. 다음 도구가
+split별 client/content를 먼저 고정하고, 한 batch 안에서 정상과 공격 run을 섞는다.
+
+```bash
+python3 03_experiments/03_orchestration/generate_collection_matrix.py \
+  --phase calibration \
+  --splits train \
+  --repetitions 1 \
+  --target-clients 20 \
+  --smoke \
+  --dataset-prefix tnsm_100lc_20260826_mixed_smoke
+```
+
+이 명령은 traffic을 만들지 않는다. 생성된 JSON에는 run마다 scenario/variant/seed,
+허용 content, 예약 logical clients, 시작 offset이 들어간다. 기본 split은 다음과 같다.
+
+| split | physical hosts | VOD | LIVE |
+|---|---|---|---|
+| train | `pi01~pi06` | `video_01~09` | `live_01` |
+| validation | `pi07~pi08` | `video_10~12` | `live_02` |
+| test | `pi09~pi10` | `video_13~15` | `live_03` |
+
+현재 LIVE 3개로는 `1/1/1`만 가능하므로 LIVE content 일반화의 근거는 제한적이다.
+공격의 낮은 강도 variant는 main matrix의 test에만 예약한다. calibration matrix에는
+parameter 점검을 위해 낮은 강도와 높은 강도를 모두 넣되 그 데이터는 학습에 쓰지 않는다.
+
+생성 후 먼저 구조만 검사한다. `--execute`가 없으므로 traffic은 발생하지 않는다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/MATRIX.json
+```
+
+선택한 batch를 실제 실행할 때만 `--execute`를 붙인다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/MATRIX.json \
+  --batch-id train_b001 \
+  --execute
+```
+
+runner는 각 logical client에 lock을 만들고 중복 사용을 거부한다. 각 scenario가 끝나면
+`validate_run_collection.py`를 자동 실행하며, 하나라도 실패하면 execution report의
+`passed`가 false가 된다. `planned_client_count`는 예약 수다. 실제 동시 활성 수는
+runtime metric으로 별도 측정해야 한다. 실제 실행에는 최근 15분 이내 생성된
+`passed: true` collection gate report가 필요하며, 기본적으로 가장 최근 report를 찾는다.
+각 execution report는 batch ID와 실행 시각을 파일명에 넣어 이전 결과를 덮어쓰지 않는다.

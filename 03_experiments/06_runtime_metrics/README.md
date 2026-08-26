@@ -11,4 +11,21 @@
 - 각 장비: CPU, memory, disk I/O, network I/O
 - Graph Pipeline 재시작 후 backlog 소진 시간
 
-현재 자동 수집 도구는 미구현이다. model inference가 추가되기 전에는 이 값을 `detection latency`라고 부르지 않는다.
+model inference가 추가되기 전에는 이 값을 `detection latency`라고 부르지 않는다.
+
+## 수집 직전 gate
+
+다음 명령은 Control, Origin, Edge 4대, Storage, Processing, Client Pi 10대 등 물리 장비
+18대에서 시각과 자원 상태를 동시에 읽는다. NTP, controller 대비 시각 차이, CPU당 1분 load, memory, root disk,
+실행/unhealthy container 수와 주요 HTTP endpoint를 검사하고 JSON을 남긴다.
+
+```bash
+python3 03_experiments/06_runtime_metrics/check_collection_gate.py
+```
+
+기본 중단 기준은 시각 차이 1.5초 초과, CPU당 load 1.25 초과, memory 90% 초과,
+root disk 여유 10% 미만, NTP 미동기화, 필수 container 부족 또는 endpoint 실패다.
+`passed: true`인 report가 없는 batch는 실행하지 않는다.
+
+20/40/60/80/100 부하 단계의 시계열 sampler와 achieved concurrency 계산은 아직
+구현 대상이다. collection matrix의 `planned_client_count`만으로 실제 동시성을 주장하지 않는다.

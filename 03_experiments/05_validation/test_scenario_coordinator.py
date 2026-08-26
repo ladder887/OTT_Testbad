@@ -147,6 +147,53 @@ class ScenarioCoordinatorTest(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.CoordinatorError, "unsupported variant"):
             self.run_scenario("A2", "not_a_variant")
 
+    def test_reserved_clients_and_content_split_are_enforced(self):
+        reserved = tuple(client.logical_client_id for client in self.clients[70:72])
+        selected_clients = [client for client in self.clients if client.logical_client_id in reserved]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RUNNER.ScenarioCoordinator(
+                clients=selected_clients,
+                executor=FakeExecutor(),
+                scenario_id="N6",
+                seed=12345,
+                smoke=True,
+                dataset_prefix="tnsm_100lc_20260826_smoke",
+                output_dir=Path(temp_dir),
+                variant="household",
+                reserved_client_ids=reserved,
+                content_ids=("video_10", "video_11", "video_12"),
+                data_split="validation",
+                matrix_id="matrix-test",
+                matrix_run_key="validation-n6-001",
+            )
+            manifest, _ = coordinator.execute()
+
+        self.assertEqual(set(manifest["logical_client_ids"]), set(reserved))
+        self.assertEqual(manifest["parameters"]["data_split"], "validation")
+        self.assertEqual(manifest["parameters"]["collection_matrix_id"], "matrix-test")
+        self.assertTrue(
+            {item["content_id"] for item in manifest["parameters"]["members"]}.issubset(
+                {"video_10", "video_11", "video_12"}
+            )
+        )
+
+    def test_long_view_uses_only_long_content_inside_the_reserved_pool(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RUNNER.ScenarioCoordinator(
+                clients=[self.clients[80]],
+                executor=FakeExecutor(),
+                scenario_id="N1",
+                seed=12345,
+                smoke=True,
+                dataset_prefix="tnsm_100lc_20260826_smoke",
+                output_dir=Path(temp_dir),
+                variant="long",
+                content_ids=("video_13", "video_14", "video_15"),
+            )
+            manifest, _ = coordinator.execute()
+
+        self.assertIn(manifest["parameters"]["content_id"], {"video_13", "video_14"})
+
     def test_auto_variant_is_reproducible_for_the_same_seed(self):
         first, _ = self.run_scenario("N1", "auto")
         second, _ = self.run_scenario("N1", "auto")

@@ -23,8 +23,9 @@
 - manifest token과 Neo4j ViewingSession/IP/Device 결합
 - raw Elasticsearch/Neo4j provenance leakage 차단
 
-추가 구현이 필요한 journal gate는 대규모 duplicate/missing event 검사와 최종 split
-leakage 검사다. Neo4j replay idempotency는 전용 rebuild/replay playbook으로 검사한다.
+추가 구현이 필요한 journal gate는 대규모 duplicate/missing event 검사다. split 예약과
+최종 CSV leakage 검사는 collection matrix와 `audit_dataset_splits.py`로 검사한다.
+Neo4j replay idempotency는 전용 rebuild/replay playbook으로 검사한다.
 
 ## 배포 후 telemetry 검사
 
@@ -90,6 +91,18 @@ python3 03_experiments/05_validation/audit_session_dataset.py \
 금지 field, 중복 sample/token, class-exclusive Edge/profile/content type, 상수 특징과
 단일 특징 ROC-AUC를 보고한다. 높은 단일 특징 AUC는 자동 삭제 사유가 아니라 workload
 generator artifact인지 실제 공격 신호인지 확인해야 한다는 경고다.
+
+## Split provenance 감사
+
+```bash
+python3 03_experiments/05_validation/audit_dataset_splits.py \
+  --dataset 06_outputs/02_datasets/session_features.csv \
+  --mode main
+```
+
+`train/validation/test`의 run, token, account, device, logical/physical client, IP, content
+교차를 검사한다. main mode는 고정 host/content 분리, test-only 낮은 공격 강도,
+모든 scenario와 양 class의 존재, `timing_scaled=false`도 요구한다.
 
 ## Edge cold/warm cache 쌍 검사
 

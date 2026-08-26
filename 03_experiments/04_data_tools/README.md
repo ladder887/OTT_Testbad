@@ -73,8 +73,9 @@ python3 03_experiments/04_data_tools/export_session_dataset.py \
 ```
 
 결과는 `06_outputs/02_datasets/session_features.csv`와 SHA-256/schema metadata다.
-scenario, label, run, client/host, account/device/content/Edge/network profile 같은 raw ID는
-metadata column에만 남고 모델 feature allowlist에는 들어가지 않는다.
+scenario, variant, label, run, matrix/split, client/host, account/device/content/Edge/network
+profile 같은 provenance는 metadata column에만 남고 모델 feature allowlist에는 들어가지
+않는다.
 
 현재 exporter는 다음 feature group을 구분해 metadata에 기록한다.
 
@@ -103,3 +104,15 @@ training pipeline에서 별도로 수행한다.
 
 이 결과는 stratified smoke check다. journal 평가에 필요한 host/content/time/account split을
 대체하지 않으며 논문 수치로 사용하지 않는다.
+
+main dataset을 export한 뒤에는 예약 split이 실제 CSV에서도 유지됐는지 검사한다.
+
+```bash
+python3 03_experiments/05_validation/audit_dataset_splits.py \
+  --dataset 06_outputs/02_datasets/session_features.csv \
+  --mode main
+```
+
+같은 run/token/account/device/client IP/physical host/content가 split을 넘거나, smoke row가
+main에 섞이거나, 지정 host/content/공격 variant 정책을 위반하면 실패한다. test가
+train/validation보다 완전히 늦게 수집되지 않았으면 future-time 성립 실패를 경고한다.

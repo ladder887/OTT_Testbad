@@ -793,7 +793,57 @@ python3 03_experiments/03_orchestration/run_scenario.py \
 
 각 manifest를 validator로 통과시키지 못하면 dataset export로 넘어가지 않는다.
 
-## 17. dataset과 학습 smoke
+## 17. 혼합 수집 전 gate와 matrix 실행
+
+개별 시나리오 검사가 끝났으면 수집 직전 상태를 JSON으로 남긴다.
+
+```bash
+cd ~/OTT_Testbad
+python3 03_experiments/06_runtime_metrics/check_collection_gate.py
+```
+
+이 명령은 control을 포함한 물리 장비 18대의 NTP, 실제 시각 차이, load, memory, disk와
+필요한 장비의 실행 container를 검사하고 Origin/Edge/Elasticsearch/Neo4j endpoint도
+요청한다. `passed: true`가 아니면
+수집을 시작하지 않는다.
+
+20명 규모의 혼합 smoke 계획을 만든다. 이 단계는 traffic을 보내지 않는다.
+
+```bash
+python3 03_experiments/03_orchestration/generate_collection_matrix.py \
+  --phase calibration \
+  --splits train \
+  --repetitions 1 \
+  --target-clients 20 \
+  --smoke \
+  --dataset-prefix tnsm_100lc_20260826_mixed_smoke
+```
+
+출력된 `output_path`를 사용해 계획을 한 번 더 읽는다. 아직 traffic은 발생하지 않는다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/출력된_MATRIX.json
+```
+
+표시된 batch 중 하나만 실제 실행한다. `--execute`가 붙은 이 명령부터 여러 client가
+동시에 요청한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/출력된_MATRIX.json \
+  --batch-id train_b001 \
+  --execute
+```
+
+각 run은 끝나는 즉시 ES/Neo4j validator를 거친다. 마지막 execution report의
+`passed: true`와 각 run의 `validation_passed: true`를 확인한다. logical client lock이
+남아 있다고 나오면 다른 matrix runner가 실행 중인지 먼저 확인한다. 실행 중 process를
+강제로 종료한 경우에만 `06_outputs/00_collection_plans/.client_reservations/`의 owner JSON을
+확인하고 해당 stale lock을 제거한다. `--execute`는 최근 15분 이내의 가장 최신
+`passed: true` gate report를 자동 사용하며, 오래됐으면 gate부터 다시 실행한다.
+
+## 18. dataset과 학습 smoke
 
 완료된 manifest와 Neo4j를 `cdn_token_id`로 결합한다.
 
@@ -834,7 +884,7 @@ bash scripts/run.sh playbooks/06_reset_collected_data.yml \
 `06_outputs`의 smoke manifest/dataset/report는 삭제하지 않아도 된다. main collection에서
 `collection_mode=smoke` 또는 `timing_scaled=true`인 manifest를 입력하지 않으면 된다.
 
-## 18. Edge cold/warm cache 준비
+## 19. Edge cold/warm cache 준비
 
 cold run은 대상 Edge를 정확히 지정하고 cache 삭제를 명시적으로 승인한다. 예를 들어
 `edge-sg`만 비우려면 다음을 실행한다.
@@ -851,7 +901,7 @@ bash scripts/run.sh playbooks/09_clear_edge_cache.yml \
 별도 run을 `--cache-state warm`으로 실행한다. container 재시작은 named cache volume을
 지우지 않으므로 cold 준비 방법이 아니다.
 
-## 19. logical client만 정지
+## 20. logical client만 정지
 
 ```bash
 bash scripts/run.sh playbooks/90_stop_clients.yml
@@ -859,7 +909,7 @@ bash scripts/run.sh playbooks/90_stop_clients.yml
 
 Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin media는 유지한다.
 
-## 20. 파일별 역할
+## 21. 파일별 역할
 
 | 파일 | 역할 |
 |---|---|
@@ -880,11 +930,15 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | `playbooks/09_clear_edge_cache.yml` | 지정한 Edge의 HLS cache를 명시적으로 비움 |
 | `playbooks/90_stop_clients.yml` | logical client 정지 |
 | `03_experiments/03_orchestration/run_scenario.py` | 여러 Pi/container의 정상·공격 scenario 조정과 manifest 기록 |
+| `03_experiments/03_orchestration/generate_collection_matrix.py` | split별 client/content와 혼합 batch를 사전 예약 |
+| `03_experiments/03_orchestration/run_collection_matrix.py` | 예약 lock을 적용해 batch 실행 후 run별 validator 호출 |
 | `03_experiments/05_validation/validate_run_collection.py` | manifest와 ES/Neo4j 수집 결과 대조 |
+| `03_experiments/05_validation/audit_dataset_splits.py` | 최종 CSV의 account/host/content/run split 누수 검사 |
+| `03_experiments/06_runtime_metrics/check_collection_gate.py` | 수집 직전 17대 시간·부하·container·endpoint 검사 |
 | `03_experiments/04_data_tools/export_session_dataset.py` | token binding 기반 ViewingSession dataset 생성 |
 | `03_experiments/04_data_tools/train_session_smoke.py` | Logistic/RF 최소 fitting 경로 검사 |
 
-## 21. 자주 발생하는 오류
+## 22. 자주 발생하는 오류
 
 | 메시지 | 처리 |
 |---|---|

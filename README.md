@@ -64,24 +64,25 @@ docker compose --env-file .env.lab -f docker-compose.lab.yml down -v
 
 ## 확장 실험 준비 순서
 
-1. 새 token/log/session schema를 Origin/API, Edge 4대, Graph Processing에 재배포한다.
-2. VOD 하나를 재생한 뒤 `validate_telemetry_contract.py`를 통과시킨다.
-3. `generate_logical_client_inventory.py`로 배치 파일을 생성하고 한 Raspberry Pi에서 10개
-   `ipvlan` logical clients의 고유 source IP를 검증한다.
-4. N1/N6/A1/A5 runner를 구현한 뒤 smoke run으로 Elasticsearch와 Neo4j 적재를 대조한다.
-5. replay idempotency와 수집 완전성 validator를 구현하고 20/40/60/80/100-client ramp
-   test를 통과한 뒤 main collection을 시작한다.
+1. `check_collection_gate.py`로 물리 장비 18대의 NTP, 시각 차이, 부하, disk, container와 endpoint를 검사한다.
+2. `generate_collection_matrix.py`로 split/client/content/scenario/variant를 고정한다.
+3. `run_collection_matrix.py`를 `--execute` 없이 실행해 예약 중복과 matrix 구조를 확인한다.
+4. calibration batch를 실행하고 각 run의 Elasticsearch/Neo4j 자동 검증을 통과시킨다.
+5. 20/40/60/80/100-client ramp에서 실제 동시성과 ingest/graph lag를 측정한다.
+6. 수집 데이터를 초기화한 뒤 main matrix를 실행하고 dataset/split 감사를 통과시킨다.
 
-현재 logical client image는 배치와 통신을 확인하는 probe runtime이다. 정상/공격 시청
-runner는 아직 구현되지 않았으므로 현재 image만으로 main collection을 시작하지 않는다.
+N1~N7과 A1/A2/A3/A6/A7 runner, 100개 `ipvlan` client, run validator, cache/graph replay,
+F0~F4 exporter와 hard-negative pilot은 구현·검증됐다. 아직 남은 main gate는 실제
+혼합 batch 파일럿과 20~100-client runtime 측정이다.
 
 ## 원격 장비 관리
 
 실제 VOD/LIVE media는 Origin Raspberry Pi에만 두고 Git 배포에서 제외한다. 모든
 장비는 2026-08-07 기준 새 OS로 초기화됐으며, Origin media는 플랫폼 배포 후 다시
-업로드한다. 현재 Origin에는 VOD `video_01~video_15`가 있고 LIVE는 아직 없다. 먼저
-`live_01~live_03` rolling 검증을 완료하며, main 실험 목표는 controlled LIVE 4개와
-실제 입력 검증 channel 1개다. 모든 실험 콘텐츠는 1080p/720p rendition을 사용한다.
+업로드한다. 현재 Origin에는 VOD `video_01~video_15`와 rolling LIVE
+`live_01~live_03`이 있고 모두 1080p/720p rendition을 사용한다. LIVE 3개만으로 가능한
+`1/1/1` content split은 일반화 근거가 약하므로 논문에서는 controlled limitation으로
+기록하고, 강한 LIVE content-holdout 주장이 필요하면 독립 원본 channel을 추가한다.
 
 고정 IP 이후 설치 명령과 Ansible 파일별 역할은
 [원격 설치 도구 README](02_deployment/09_remote-management/README.md)에 있다.

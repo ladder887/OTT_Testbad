@@ -6,7 +6,7 @@
 |---|---|
 | `01_client_runtime/` | logical client container image와 연결 점검 agent |
 | `02_scenarios/` | 정상/공격 scenario 구현과 상태 |
-| `03_orchestration/` | 100 clients inventory와 Pi별 Compose 생성 |
+| `03_orchestration/` | inventory, 시나리오, split 예약, 혼합 batch 실행 |
 | `04_data_tools/` | run manifest, export, provenance |
 | `05_validation/` | IP/식별자/로그/graph 정합성 검증 |
 | `06_runtime_metrics/` | throughput, lag, CPU, memory, I/O 측정 |
@@ -39,6 +39,11 @@ python 03_experiments/05_validation/validate_inventory.py `
 - run manifest token binding schema/기록 도구: 구현됨
 - manifest와 ES/Neo4j request/session 대조 validator: 구현됨
 - ViewingSession F0~F4 dataset export, leakage audit와 Logistic/RF smoke: 구현됨
+- train/validation/test client·host·content 사전 예약 matrix: 구현됨
+- 동시 batch logical-client lock과 run별 ES/Neo4j 자동 검증: 구현됨
+- 수집 직전 NTP/시각 차이/부하/container/endpoint gate: 구현됨
+- 최종 CSV split provenance 누수 감사: 구현됨
 
-smoke 검증을 통과하기 전에는 main collection을 시작하지 않는다. smoke 데이터와 지표는
-pipeline 동작 확인용이며 논문 결과에 사용하지 않는다.
+개별 시나리오와 hard-negative smoke는 통과했다. 혼합 batch 및 20/40/60/80/100-client
+runtime calibration을 통과하기 전에는 main collection을 시작하지 않는다. smoke 데이터와
+지표는 pipeline 동작 확인용이며 논문 결과에 사용하지 않는다.

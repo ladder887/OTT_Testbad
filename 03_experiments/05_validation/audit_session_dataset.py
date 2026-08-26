@@ -15,7 +15,12 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET = REPOSITORY_ROOT / "06_outputs" / "02_datasets" / "session_features.csv"
 FORBIDDEN_FEATURES = {
+    "dataset_prefix",
+    "data_split",
+    "collection_matrix_id",
+    "matrix_run_key",
     "scenario_id",
+    "scenario_variant",
     "attack_family",
     "label_binary",
     "run_id",

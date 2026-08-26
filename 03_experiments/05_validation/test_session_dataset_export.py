@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,6 +20,39 @@ EXPORTER = load_exporter_module()
 
 
 class SessionDatasetExportTest(unittest.TestCase):
+    def test_manifest_split_provenance_is_kept_outside_feature_columns(self):
+        manifest = {
+            "status": "completed",
+            "run_id": "run_1",
+            "dataset_prefix": "tnsm_100lc_20260826_main",
+            "scenario_id": "A2",
+            "attack_family": "M2",
+            "parameters": {
+                "data_split": "test",
+                "collection_matrix_id": "matrix-main",
+                "matrix_run_key": "test-a2-001",
+                "scenario_variant": "stealth",
+                "cache_state": "warm",
+                "timing_scaled": False,
+                "selected_clients": [],
+            },
+            "token_bindings": [{"cdn_token_id": "cdn_111111111111111111111111"}],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            labels, _ = EXPORTER.load_manifests([path])
+
+        label = labels["cdn_111111111111111111111111"]
+        self.assertEqual(label["data_split"], "test")
+        self.assertEqual(label["scenario_variant"], "stealth")
+        self.assertEqual(label["collection_matrix_id"], "matrix-main")
+        self.assertTrue(
+            {"data_split", "scenario_variant", "collection_matrix_id"}.isdisjoint(
+                EXPORTER.FEATURE_COLUMNS
+            )
+        )
+
     def test_graph_query_uses_a_node_map_projection(self):
         with mock.patch.object(EXPORTER, "neo4j_query", return_value=[]) as query:
             rows = EXPORTER.query_graph_sessions(
