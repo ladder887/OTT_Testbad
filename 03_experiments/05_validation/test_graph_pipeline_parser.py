@@ -134,6 +134,17 @@ class GraphPipelineParserTest(unittest.TestCase):
         self.assertNotIn("scenario_id", parsed)
         self.assertNotIn("label", parsed)
 
+    def test_playback_token_content_overrides_a_stale_watch_referrer(self):
+        content_id = GraphPipeline._resolve_request_content_id(
+            "playback_start",
+            "/api/playback/start",
+            {},
+            "http://192.168.0.101:5173/watch/video_05",
+            "video_11",
+        )
+
+        self.assertEqual(content_id, "video_11")
+
     def test_edge_proxy_api_event_is_not_duplicated_in_graph(self):
         parsed = self.pipeline.parse_nginx_log(
             {
@@ -324,6 +335,60 @@ class GraphPipelineParserTest(unittest.TestCase):
             if "MERGE (r:Request" in query
         ]
         self.assertEqual(request_writes[0]["status"], 403)
+
+    def test_replay_sensitive_aggregates_only_change_for_new_request_links(self):
+        parsed = self.pipeline.parse_nginx_log(
+            {
+                "event_time_epoch": "1787065200.123",
+                "client_ip": "192.168.0.151",
+                "edge_server": "edge-kr",
+                "request_uri": "/hls/video_01/720p/seg_00001.ts",
+                "request_method": "GET",
+                "status": 200,
+                "cdn_token_id": "cdn_0123456789abcdef01234567",
+                "request_id": "edge-kr-1787065200.123-1-1",
+                "bytes_sent": 1024,
+                "observed_device_id": "device_1111111111111111",
+            }
+        )
+        fake_session = FakeSession()
+        self.pipeline.driver = FakeDriver(fake_session)
+
+        self.pipeline.build_knowledge_graph([parsed])
+
+        session_upsert = next(
+            query
+            for query, _ in fake_session.calls
+            if "MERGE (vs:ViewingSession" in query
+        )
+        request_link = next(
+            query
+            for query, _ in fake_session.calls
+            if "[link:MAKES_REQUEST]" in query
+        )
+        content_upsert = next(
+            query
+            for query, _ in fake_session.calls
+            if "MERGE (c:Content" in query
+        )
+        content_link = next(
+            query
+            for query, _ in fake_session.calls
+            if "[link:TARGETS_CONTENT]" in query
+        )
+
+        self.assertNotIn(
+            "vs.total_segment_requests = coalesce(vs.total_segment_requests, 0) +",
+            session_upsert,
+        )
+        self.assertIn("ON CREATE SET", request_link)
+        self.assertIn("vs.total_segment_requests", request_link)
+        self.assertNotIn(
+            "c.request_count = coalesce(c.request_count, 0) +",
+            content_upsert,
+        )
+        self.assertIn("ON CREATE SET", content_link)
+        self.assertIn("c.request_count", content_link)
 
 
 if __name__ == "__main__":

@@ -465,6 +465,28 @@ class GraphPipeline:
             return "live"
         return "vod"
 
+    @classmethod
+    def _resolve_request_content_id(
+        cls,
+        request_kind,
+        request_path,
+        query_params,
+        referer,
+        token_content_id,
+    ):
+        token_content = str(token_content_id or "").strip()
+        if token_content == "-":
+            token_content = ""
+        if request_kind == "playback_start" and token_content:
+            return token_content
+        extracted = cls._extract_content_id_from_request(
+            request_kind,
+            request_path,
+            query_params,
+            referer,
+        )
+        return extracted or token_content
+
     @staticmethod
     def _classify_device(user_agent):
         ua = str(user_agent or "").lower()
@@ -980,16 +1002,13 @@ class GraphPipeline:
 
                 query_params = log.get("query_params") if isinstance(log.get("query_params"), dict) else {}
                 referer = log.get("referer", "-")
-                request_content_id = self._extract_content_id_from_request(
+                request_content_id = self._resolve_request_content_id(
                     request_kind,
                     request_path,
                     query_params,
                     referer,
+                    log.get("token_content_id", "-"),
                 )
-                if not request_content_id:
-                    token_content_id = log.get("token_content_id", "-")
-                    if token_content_id and token_content_id != "-":
-                        request_content_id = token_content_id
 
                 token_issued_at = log.get("token_issued_at", "-") or "-"
                 token_expires = log.get("token_expires", "-") or "-"
@@ -1108,9 +1127,11 @@ class GraphPipeline:
                                 WHEN c.type IS NULL OR c.type IN ['CATALOG', 'HLS_STREAM'] THEN $content_type
                                 ELSE c.type
                             END,
-                            c.last_accessed = datetime($timestamp),
-                            c.request_count = coalesce(c.request_count, 0) + 1,
-                            c.total_bytes = coalesce(c.total_bytes, 0) + $bytes_sent
+                            c.last_accessed = CASE
+                                WHEN c.last_accessed IS NULL OR datetime($timestamp) > c.last_accessed
+                                THEN datetime($timestamp)
+                                ELSE c.last_accessed
+                            END
                         """,
                         content_id=request_content_id,
                         content_type=content_type,
@@ -1152,12 +1173,6 @@ class GraphPipeline:
                         vs.token_expires = CASE WHEN $token_expires = '-' THEN vs.token_expires ELSE $token_expires END,
                         vs.token_ttl_sec = CASE WHEN $token_ttl_sec = 0 THEN coalesce(vs.token_ttl_sec, 0) ELSE $token_ttl_sec END,
                         vs.observed_device_id = $observed_device_id,
-                        vs.request_count = coalesce(vs.request_count, 0) + 1,
-                        vs.total_manifest_requests = coalesce(vs.total_manifest_requests, 0) + $manifest_inc,
-                        vs.total_segment_requests = coalesce(vs.total_segment_requests, 0) + $segment_inc,
-                        vs.total_playback_start_requests = coalesce(vs.total_playback_start_requests, 0) + $playback_inc,
-                        vs.total_browse_requests = coalesce(vs.total_browse_requests, 0) + $browse_inc,
-                        vs.total_bytes = coalesce(vs.total_bytes, 0) + $bytes_sent,
                         vs.has_browse = coalesce(vs.has_browse, false) OR $is_browse,
                         vs.has_playback_start = coalesce(vs.has_playback_start, false) OR $is_playback_start,
                         vs.playback_without_browse = CASE
@@ -1190,10 +1205,22 @@ class GraphPipeline:
                     """
                     MATCH (vs:ViewingSession {viewing_session_id: $viewing_session_id})
                     MATCH (r:Request {request_id: $request_id})
-                    MERGE (vs)-[:MAKES_REQUEST]->(r)
+                    MERGE (vs)-[link:MAKES_REQUEST]->(r)
+                    ON CREATE SET
+                        vs.request_count = coalesce(vs.request_count, 0) + 1,
+                        vs.total_manifest_requests = coalesce(vs.total_manifest_requests, 0) + $manifest_inc,
+                        vs.total_segment_requests = coalesce(vs.total_segment_requests, 0) + $segment_inc,
+                        vs.total_playback_start_requests = coalesce(vs.total_playback_start_requests, 0) + $playback_inc,
+                        vs.total_browse_requests = coalesce(vs.total_browse_requests, 0) + $browse_inc,
+                        vs.total_bytes = coalesce(vs.total_bytes, 0) + $bytes_sent
                     """,
                     viewing_session_id=viewing_session_id,
                     request_id=request_id,
+                    manifest_inc=1 if is_manifest else 0,
+                    segment_inc=1 if is_segment else 0,
+                    playback_inc=1 if is_playback_start else 0,
+                    browse_inc=1 if is_browse else 0,
+                    bytes_sent=log.get("size", 0),
                 )
 
                 if account_id and account_id != "-":
@@ -1267,11 +1294,15 @@ class GraphPipeline:
                         MATCH (r:Request {request_id: $request_id})
                         MATCH (c:Content {content_id: $content_id})
                         MERGE (vs)-[:TARGETS_CONTENT]->(c)
-                        MERGE (r)-[:TARGETS_CONTENT]->(c)
+                        MERGE (r)-[link:TARGETS_CONTENT]->(c)
+                        ON CREATE SET
+                            c.request_count = coalesce(c.request_count, 0) + 1,
+                            c.total_bytes = coalesce(c.total_bytes, 0) + $bytes_sent
                         """,
                         viewing_session_id=viewing_session_id,
                         request_id=request_id,
                         content_id=request_content_id,
+                        bytes_sent=log.get("size", 0),
                     )
 
                 if client_ip and client_ip != "-":
