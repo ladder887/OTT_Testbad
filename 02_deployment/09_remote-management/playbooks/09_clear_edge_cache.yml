@@ -1,0 +1,49 @@
+---
+- name: Clear selected Edge cache volumes for a controlled cold run
+  hosts: edge_nodes
+  serial: 1
+  gather_facts: false
+  become: false
+
+  pre_tasks:
+    - name: Require explicit cache-clear confirmation
+      ansible.builtin.assert:
+        that:
+          - confirm_clear_edge_cache | default(false) | bool
+        fail_msg: >-
+          Pass -e confirm_clear_edge_cache=true and use --limit to name the
+          Edge nodes whose cached HLS objects may be deleted.
+
+  tasks:
+    - name: Delete cached HLS objects inside the Edge container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ edge_id }}"
+          - sh
+          - -c
+          - find /var/cache/nginx/cdn -mindepth 1 -delete
+      changed_when: true
+
+    - name: Count files remaining in the Edge cache
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ edge_id }}"
+          - sh
+          - -c
+          - find /var/cache/nginx/cdn -type f | wc -l
+      register: remaining_cache_files
+      changed_when: false
+
+    - name: Require an empty Edge cache
+      ansible.builtin.assert:
+        that:
+          - remaining_cache_files.stdout | trim == '0'
+        fail_msg: "{{ edge_id }} cache still contains files after deletion."
+
+    - name: Report the prepared cold Edge
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} / {{ edge_id }} cache is empty."

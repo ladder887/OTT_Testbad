@@ -86,6 +86,7 @@ class ScenarioCoordinatorTest(unittest.TestCase):
         self.assertEqual(len(manifest["token_bindings"]), 1)
         self.assertEqual(manifest["observed_request_count"], 10)
         self.assertEqual(manifest["expected_request_count"], 9)
+        self.assertEqual(manifest["parameters"]["cache_state"], "unspecified")
         self.assertNotIn("token=secret", json.dumps(persisted))
 
     def test_a1_uses_one_owner_and_two_real_consumers(self):

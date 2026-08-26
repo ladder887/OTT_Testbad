@@ -829,7 +829,24 @@ bash scripts/run.sh playbooks/06_reset_collected_data.yml \
 `06_outputs`의 smoke manifest/dataset/report는 삭제하지 않아도 된다. main collection에서
 `collection_mode=smoke` 또는 `timing_scaled=true`인 manifest를 입력하지 않으면 된다.
 
-## 18. logical client만 정지
+## 18. Edge cold/warm cache 준비
+
+cold run은 대상 Edge를 정확히 지정하고 cache 삭제를 명시적으로 승인한다. 예를 들어
+`edge-sg`만 비우려면 다음을 실행한다.
+
+```bash
+cd ~/OTT_Testbad/02_deployment/09_remote-management
+bash scripts/run.sh playbooks/09_clear_edge_cache.yml \
+  --limit ott-edge-3 \
+  -e confirm_clear_edge_cache=true
+```
+
+출력의 `cache is empty`를 확인한 뒤 scenario에 `--cache-state cold`를 준다. warm 조건은
+같은 Edge, content, rendition, segment 범위를 `--cache-state warmup`으로 한 번 요청한 뒤
+별도 run을 `--cache-state warm`으로 실행한다. container 재시작은 named cache volume을
+지우지 않으므로 cold 준비 방법이 아니다.
+
+## 19. logical client만 정지
 
 ```bash
 bash scripts/run.sh playbooks/90_stop_clients.yml
@@ -837,7 +854,7 @@ bash scripts/run.sh playbooks/90_stop_clients.yml
 
 Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin media는 유지한다.
 
-## 19. 파일별 역할
+## 20. 파일별 역할
 
 | 파일 | 역할 |
 |---|---|
@@ -853,13 +870,16 @@ Client Pi의 logical client container만 내린다. 서버, DB, Edge, Origin med
 | `playbooks/04_verify.yml` | media, DB, LIVE, container, endpoint 검증 |
 | `playbooks/05_probe_clients.yml` | 100개 logical client의 Edge 통신 검증 |
 | `playbooks/06_reset_collected_data.yml` | 정식 수집 전 Elasticsearch, Neo4j, Graph Pipeline checkpoint 초기화 |
+| `playbooks/07_rebuild_graph_from_elasticsearch.yml` | Elasticsearch 원본으로 Neo4j graph 재구축 |
+| `playbooks/08_validate_graph_replay_idempotency.yml` | 같은 원본 재처리 전후 graph fingerprint 비교 |
+| `playbooks/09_clear_edge_cache.yml` | 지정한 Edge의 HLS cache를 명시적으로 비움 |
 | `playbooks/90_stop_clients.yml` | logical client 정지 |
 | `03_experiments/03_orchestration/run_scenario.py` | 여러 Pi/container의 정상·공격 scenario 조정과 manifest 기록 |
 | `03_experiments/05_validation/validate_run_collection.py` | manifest와 ES/Neo4j 수집 결과 대조 |
 | `03_experiments/04_data_tools/export_session_dataset.py` | token binding 기반 ViewingSession dataset 생성 |
 | `03_experiments/04_data_tools/train_session_smoke.py` | Logistic/RF 최소 fitting 경로 검사 |
 
-## 20. 자주 발생하는 오류
+## 21. 자주 발생하는 오류
 
 | 메시지 | 처리 |
 |---|---|

@@ -275,6 +275,7 @@ class ScenarioCoordinator:
         smoke: bool,
         dataset_prefix: str,
         output_dir: Path,
+        cache_state: str = "unspecified",
     ) -> None:
         self.clients = clients
         self.executor = executor
@@ -288,6 +289,7 @@ class ScenarioCoordinator:
         self.parameters: dict[str, Any] = {
             "collection_mode": "smoke" if smoke else "main",
             "timing_scaled": smoke,
+            "cache_state": cache_state,
         }
         self.remote_results: list[dict[str, Any]] = []
         self.token_bindings: list[dict[str, Any]] = []
@@ -802,6 +804,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ssh-user", default="ottadmin")
     parser.add_argument("--ssh-key", type=Path, default=Path.home() / ".ssh" / "ott_lab_ed25519")
     parser.add_argument("--remote-timeout-sec", type=float, default=1800.0)
+    parser.add_argument(
+        "--cache-state",
+        choices=("unspecified", "cold", "warmup", "warm", "mixed"),
+        default="unspecified",
+        help="record the externally prepared Edge cache condition in the run manifest",
+    )
     return parser.parse_args()
 
 
@@ -833,6 +841,7 @@ def main() -> int:
         smoke=args.smoke,
         dataset_prefix=dataset_prefix,
         output_dir=args.output_dir.resolve(),
+        cache_state=args.cache_state,
     )
     try:
         manifest, path = coordinator.execute(dry_run=args.dry_run)

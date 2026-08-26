@@ -50,7 +50,8 @@ cd ~/OTT_Testbad
 python3 03_experiments/03_orchestration/run_scenario.py \
   --scenario N1 \
   --smoke \
-  --seed 2026082601
+  --seed 2026082601 \
+  --cache-state cold
 ```
 
 지원 범위는 `N1~N7`, `A1`, `A2`, `A3`, `A6`, `A7`이다. 실행 후 출력되는
@@ -62,3 +63,8 @@ python3 03_experiments/03_orchestration/run_scenario.py \
 - A6는 네 container와 네 account/token을 순서대로 교대한다.
 - A4는 현재 2개 rendition이라 거부한다.
 - A5는 주 ViewingSession task가 아니므로 거부한다.
+
+`--cache-state`는 `cold`, `warmup`, `warm`, `mixed`, `unspecified` 중 하나를
+manifest에 기록한다. 이 옵션 자체가 Edge cache를 변경하지 않는다. cold run 전에는
+`playbooks/09_clear_edge_cache.yml`로 대상 Edge cache를 비우고, warm run 전에는 같은
+resource를 요청하는 별도 warm-up run을 수행한다.
