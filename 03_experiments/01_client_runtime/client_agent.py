@@ -15,8 +15,10 @@ import json
 import os
 import random
 import re
+import shutil
 import signal
 import statistics
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +32,24 @@ from typing import Any
 DEFAULT_TIMEOUT_SEC = 20.0
 DEFAULT_RETRIES = 3
 SIGNED_QUERY_KEYS = ("token", "sig")
+
+
+@dataclass(frozen=True)
+class NetworkProfile:
+    profile_id: str
+    target_rtt_ms: float
+    one_way_delay_ms: float
+    one_way_jitter_ms: float
+    one_way_loss_percent: float
+
+
+NETWORK_PROFILES = {
+    "P0": NetworkProfile("P0", 0.0, 0.0, 0.0, 0.0),
+    "P1": NetworkProfile("P1", 18.0, 9.0, 2.5, 0.0),
+    "P2": NetworkProfile("P2", 45.0, 22.5, 9.0, 0.15),
+    "P3": NetworkProfile("P3", 90.0, 45.0, 14.0, 0.50),
+    "P4": NetworkProfile("P4", 170.0, 85.0, 18.0, 0.25),
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +114,102 @@ class MediaPlaylist:
 
 class AgentError(RuntimeError):
     """Raised for a failed experiment action."""
+
+
+def _format_netem_number(value: float) -> str:
+    return f"{value:g}"
+
+
+def network_profile_commands(profile_id: str, interface: str = "eth0") -> list[list[str]]:
+    profile = NETWORK_PROFILES.get(profile_id.upper())
+    if profile is None:
+        raise ValueError(f"unknown network profile: {profile_id}")
+    if profile.profile_id == "P0":
+        return []
+    netem = [
+        "netem",
+        "delay",
+        f"{_format_netem_number(profile.one_way_delay_ms)}ms",
+        f"{_format_netem_number(profile.one_way_jitter_ms)}ms",
+        "distribution",
+        "normal",
+    ]
+    if profile.one_way_loss_percent > 0:
+        netem.extend(
+            ["loss", f"{_format_netem_number(profile.one_way_loss_percent)}%"]
+        )
+    return [
+        ["ip", "link", "add", "ifb0", "type", "ifb"],
+        ["ip", "link", "set", "dev", "ifb0", "up"],
+        ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", *netem],
+        ["tc", "qdisc", "add", "dev", interface, "handle", "ffff:", "ingress"],
+        [
+            "tc",
+            "filter",
+            "add",
+            "dev",
+            interface,
+            "parent",
+            "ffff:",
+            "protocol",
+            "all",
+            "u32",
+            "match",
+            "u32",
+            "0",
+            "0",
+            "action",
+            "mirred",
+            "egress",
+            "redirect",
+            "dev",
+            "ifb0",
+        ],
+        ["tc", "qdisc", "add", "dev", "ifb0", "root", "handle", "1:", *netem],
+    ]
+
+
+def _run_network_command(command: list[str], *, ignore_failure: bool = False) -> None:
+    executable = shutil.which(command[0])
+    if not executable:
+        if ignore_failure:
+            return
+        raise AgentError(f"network profile tool is missing: {command[0]}")
+    completed = subprocess.run(
+        [executable, *command[1:]],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if completed.returncode != 0 and not ignore_failure:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise AgentError(f"network profile command failed ({' '.join(command)}): {detail}")
+
+
+def configure_network_profile(config: ClientConfig, interface: str = "eth0") -> dict[str, Any]:
+    profile_id = config.network_profile_id.upper()
+    profile = NETWORK_PROFILES.get(profile_id)
+    if profile is None:
+        raise AgentError(f"unknown NETWORK_PROFILE_ID: {config.network_profile_id}")
+
+    cleanup_commands = [
+        ["tc", "qdisc", "del", "dev", interface, "root"],
+        ["tc", "qdisc", "del", "dev", interface, "ingress"],
+        ["ip", "link", "del", "ifb0"],
+    ]
+    for command in cleanup_commands:
+        _run_network_command(command, ignore_failure=True)
+    for command in network_profile_commands(profile_id, interface):
+        _run_network_command(command)
+
+    return {
+        "profile_id": profile.profile_id,
+        "mode": "baseline" if profile.profile_id == "P0" else "bidirectional_netem",
+        "target_rtt_ms": profile.target_rtt_ms,
+        "one_way_delay_ms": profile.one_way_delay_ms,
+        "one_way_jitter_ms": profile.one_way_jitter_ms,
+        "one_way_loss_percent": profile.one_way_loss_percent,
+    }
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -697,14 +813,20 @@ class PlaybackRuntime:
         return result
 
 
-def print_config(config: ClientConfig) -> int:
+def print_config(config: ClientConfig, network_state: dict[str, Any]) -> int:
     public = asdict(config)
     public.pop("account_password", None)
+    public["network_impairment"] = network_state
     print(json.dumps(public, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
-def probe(config: ClientConfig, timeout: float, retries: int) -> int:
+def probe(
+    config: ClientConfig,
+    network_state: dict[str, Any],
+    timeout: float,
+    retries: int,
+) -> int:
     query = urllib.parse.urlencode({"probe": "logical-client"})
     url = f"{config.edge_base_url.rstrip('/')}/?{query}"
     headers = {"User-Agent": "OTT-TNSM-Probe/1.0"}
@@ -718,6 +840,7 @@ def probe(config: ClientConfig, timeout: float, retries: int) -> int:
                     "logical_client_id": config.logical_client_id,
                     "configured_source_ip": config.source_ip,
                     "edge_id": config.edge_id,
+                    "network_impairment": network_state,
                     "url": url,
                     "status": response.status,
                     "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
@@ -747,7 +870,7 @@ def probe(config: ClientConfig, timeout: float, retries: int) -> int:
     return 1
 
 
-def idle(config: ClientConfig) -> int:
+def idle(config: ClientConfig, network_state: dict[str, Any]) -> int:
     stop = False
 
     def request_stop(_signum: int, _frame: object) -> None:
@@ -763,6 +886,7 @@ def idle(config: ClientConfig) -> int:
                 "logical_client_id": config.logical_client_id,
                 "source_ip": config.source_ip,
                 "edge_id": config.edge_id,
+                "network_impairment": network_state,
             },
             sort_keys=True,
         ),
@@ -802,19 +926,26 @@ def main() -> int:
     args = parse_args()
     try:
         config = ClientConfig.from_environment()
-    except ValueError as exc:
+        network_state = configure_network_profile(config)
+    except (AgentError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
     if args.command == "show-config":
-        return print_config(config)
+        return print_config(config, network_state)
     if args.command == "probe":
-        return probe(config, timeout=args.timeout, retries=args.retries)
+        return probe(
+            config,
+            network_state,
+            timeout=args.timeout,
+            retries=args.retries,
+        )
     if args.command == "idle":
-        return idle(config)
+        return idle(config, network_state)
 
     try:
         result = PlaybackRuntime(config, decode_spec(args.spec_base64)).execute()
+        result["network_impairment"] = network_state
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if result.get("ok") else 1
     except (AgentError, KeyError, ValueError) as exc:

@@ -17,6 +17,22 @@ AGENT = load_agent_module()
 
 
 class ClientAgentHlsTest(unittest.TestCase):
+    def test_network_profiles_generate_bidirectional_netem_commands(self):
+        commands = AGENT.network_profile_commands("P3")
+
+        self.assertEqual(AGENT.network_profile_commands("P0"), [])
+        self.assertEqual(commands[0], ["ip", "link", "add", "ifb0", "type", "ifb"])
+        self.assertTrue(any(command[:4] == ["tc", "qdisc", "add", "dev"] for command in commands))
+        self.assertTrue(any("mirred" in command for command in commands))
+        netem_commands = [command for command in commands if "netem" in command]
+        self.assertEqual(len(netem_commands), 2)
+        self.assertTrue(all("45ms" in command for command in netem_commands))
+        self.assertTrue(all("0.5%" in command for command in netem_commands))
+
+    def test_unknown_network_profile_is_rejected(self):
+        with self.assertRaises(ValueError):
+            AGENT.network_profile_commands("P9")
+
     def test_signed_child_url_inherits_only_token_and_signature(self):
         parent = "http://edge/hls/video_01/master.m3u8?token=abc&sig=def&ignored=value"
         child = AGENT.signed_child_url(parent, "720p/playlist.m3u8")

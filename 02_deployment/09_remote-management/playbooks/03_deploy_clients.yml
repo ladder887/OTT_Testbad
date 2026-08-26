@@ -85,6 +85,43 @@
           physical_host_id }}
       changed_when: true
 
+    - name: Read logical-client service names
+      ansible.builtin.command:
+        argv: [docker, compose, config, --services]
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      register: logical_client_services
+      changed_when: false
+
+    - name: Require 10 configured logical clients
+      ansible.builtin.assert:
+        that:
+          - logical_client_services.stdout_lines | length == logical_clients_per_host
+        fail_msg: >-
+          {{ inventory_hostname }} has
+          {{ logical_client_services.stdout_lines | length }} configured services;
+          expected {{ logical_clients_per_host }}.
+
+    - name: Require every assigned network profile to apply
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - exec
+          - -T
+          - "{{ item }}"
+          - python
+          - /app/client_agent.py
+          - show-config
+        chdir: >-
+          {{ project_root }}/03_experiments/07_generated/{{
+          physical_host_id }}
+      loop: "{{ logical_client_services.stdout_lines }}"
+      loop_control:
+        label: "{{ inventory_hostname }} / {{ item }}"
+      changed_when: false
+
     - name: Count running logical clients
       ansible.builtin.command:
         argv: [docker, compose, ps, --status, running, --quiet]
