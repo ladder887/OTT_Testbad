@@ -891,6 +891,10 @@ SSH가 끊겨도 `tmux` 안의 campaign은 계속 실행된다. campaign runner�
 gate를 새로 만들고, batch 종료 후 state를 저장한다. 프로세스가 완전히 끝난 뒤 같은
 명령을 다시 실행하면 통과한 batch는 건너뛴다.
 
+batch timeout은 마지막 run의 시작 지연까지 포함해 자동 계산된다. main 후반 batch는
+마지막 run이 50분 이후 시작하므로 임의의 짧은 `--batch-timeout-sec`를 추가하지 않는다.
+실제 계산값은 campaign log의 `batch_started.batch_timeout_sec`와 state의 attempt에 남는다.
+
 실행 순서는 반드시 `train 전체 → validation 전체 → 별도 미래 날짜의 test 전체`다.
 validation과 test는 각각 `--split validation`, `--split test`로 바꾼다. scenario 실행 중
 중단된 batch는 부분 데이터가 남을 수 있어 자동 재시도되지 않는다. state의 마지막 attempt와

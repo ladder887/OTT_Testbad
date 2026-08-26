@@ -99,6 +99,20 @@ class CollectionCampaignTest(unittest.TestCase):
         self.assertNotIn("--skip-gate", command)
         self.assertNotIn("--skip-validation", command)
 
+    def test_default_batch_timeout_includes_latest_start_offset(self):
+        batch = {
+            "runs": [
+                {"start_offset_sec": 0.0},
+                {"start_offset_sec": 3450.0},
+            ]
+        }
+        args = argparse.Namespace(
+            remote_timeout_sec=1800.0,
+            validation_wait_sec=180.0,
+            live_setup_timeout_sec=60.0,
+        )
+        self.assertEqual(CAMPAIGN.default_batch_timeout_sec(batch, args), 6090.0)
+
 
 if __name__ == "__main__":
     unittest.main()

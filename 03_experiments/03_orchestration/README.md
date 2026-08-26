@@ -166,6 +166,11 @@ execution report를 이용해 건너뛴다. train을 모두 끝낸 뒤 validatio
 test 순서로 실행한다. test 수집을 시작한 뒤 train을 추가하면 strict future split이
 깨지므로 새 연구 campaign으로 취급해야 한다.
 
+기본 batch timeout은 해당 batch의 마지막 `start_offset_sec`에 run·validation·LIVE 준비
+상한과 10분 여유를 더해 자동 계산한다. 뒤쪽 main batch는 마지막 run이 50분 이후 시작할
+수 있으므로 고정 44분 timeout을 사용하면 안 된다. 장애 재현처럼 명확한 이유가 있을 때만
+`--batch-timeout-sec`로 직접 덮어쓴다.
+
 기본 state는 다음 위치에 생긴다.
 
 ```text

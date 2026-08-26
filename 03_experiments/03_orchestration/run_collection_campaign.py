@@ -241,6 +241,20 @@ def emit_progress(event: str, **fields: Any) -> None:
     print(json.dumps({"event": event, "at": utc_now(), **fields}, sort_keys=True), file=sys.stderr, flush=True)
 
 
+def default_batch_timeout_sec(batch: dict[str, Any], args: argparse.Namespace) -> float:
+    latest_start_offset = max(
+        (float(run.get("start_offset_sec") or 0.0) for run in batch.get("runs", [])),
+        default=0.0,
+    )
+    return (
+        latest_start_offset
+        + args.remote_timeout_sec
+        + args.validation_wait_sec
+        + args.live_setup_timeout_sec
+        + 600.0
+    )
+
+
 def run_campaign(
     matrix: dict[str, Any],
     matrix_path: Path,
@@ -300,11 +314,14 @@ def run_campaign(
             emit_progress("gate_failed", batch_id=batch_id, error=error)
             return state, False
 
-        attempt["status"] = "running"
+        timeout = args.batch_timeout_sec or default_batch_timeout_sec(batch, args)
+        attempt.update({"status": "running", "batch_timeout_sec": timeout})
         write_state(state_path, state)
-        emit_progress("batch_started", batch_id=batch_id, gate_report_path=attempt["gate_report_path"])
-        timeout = args.batch_timeout_sec or (
-            args.remote_timeout_sec + args.validation_wait_sec + args.live_setup_timeout_sec + 600.0
+        emit_progress(
+            "batch_started",
+            batch_id=batch_id,
+            gate_report_path=attempt["gate_report_path"],
+            batch_timeout_sec=timeout,
         )
         try:
             execution = subprocess.run(
