@@ -6,9 +6,12 @@ import argparse
 import concurrent.futures
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +23,8 @@ SCENARIO_RUNNER = Path(__file__).with_name("run_scenario.py")
 COLLECTION_VALIDATOR = REPOSITORY_ROOT / "03_experiments" / "05_validation" / "validate_run_collection.py"
 DEFAULT_LOCK_DIR = REPOSITORY_ROOT / "06_outputs" / "00_collection_plans" / ".client_reservations"
 DEFAULT_GATE_DIR = REPOSITORY_ROOT / "06_outputs" / "03_runtime_metrics"
+ORIGIN_IP = "192.168.0.101"
+LIVE_MANAGER_PATH = "/app/src/scripts/manageLiveChannels.js"
 
 
 class MatrixExecutionError(RuntimeError):
@@ -135,6 +140,124 @@ def parse_json_output(text: str) -> dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError as exc:
         raise MatrixExecutionError(f"scenario runner returned invalid JSON: {text[-500:]}") from exc
+
+
+def active_live_ids_for_batch(batch: dict[str, Any]) -> list[str]:
+    return sorted(
+        {
+            str(content_id)
+            for run in batch.get("runs", [])
+            if run.get("scenario_id") in {"N7", "A7"}
+            for content_id in run.get("allowed_content_ids", [])
+        }
+    )
+
+
+def parse_live_playlist(text: str) -> tuple[int, str]:
+    media_sequence = -1
+    segments: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            try:
+                media_sequence = int(line.split(":", 1)[1])
+            except ValueError:
+                media_sequence = -1
+        elif line and not line.startswith("#"):
+            segments.append(line)
+    if media_sequence < 0 or not segments:
+        raise MatrixExecutionError("LIVE media playlist has no sequence or segments")
+    return media_sequence, segments[-1]
+
+
+def read_live_state(content_id: str, rendition: str, timeout_sec: float = 5.0) -> tuple[int, str]:
+    url = f"http://{ORIGIN_IP}:8080/hls/{content_id}/{rendition}/playlist.m3u8"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_sec) as response:
+            return parse_live_playlist(response.read().decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise MatrixExecutionError(f"cannot read {content_id}/{rendition} LIVE playlist: {exc}") from exc
+
+
+def wait_for_live_roll(active_ids: list[str], timeout_sec: float = 45.0) -> dict[str, Any]:
+    if not active_ids:
+        return {"passed": True, "active_content_ids": [], "states": {}}
+    renditions = ("1080p", "720p")
+    deadline = time.monotonic() + timeout_sec
+    baseline: dict[str, tuple[int, str]] | None = None
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            current = {
+                f"{content_id}/{rendition}": read_live_state(content_id, rendition)
+                for content_id in active_ids
+                for rendition in renditions
+            }
+            if baseline is None:
+                baseline = current
+            elif all(current[key] != baseline[key] for key in current):
+                return {
+                    "passed": True,
+                    "active_content_ids": active_ids,
+                    "states": {
+                        key: {
+                            "before_media_sequence": baseline[key][0],
+                            "after_media_sequence": value[0],
+                            "before_latest_segment": baseline[key][1],
+                            "after_latest_segment": value[1],
+                        }
+                        for key, value in current.items()
+                    },
+                }
+        except MatrixExecutionError as exc:
+            last_error = str(exc)
+        time.sleep(3.0)
+    raise MatrixExecutionError(
+        f"LIVE playlists did not roll within {timeout_sec:.0f}s: {last_error or 'sequence unchanged'}"
+    )
+
+
+def configure_live_channels(
+    active_ids: list[str],
+    *,
+    ssh_user: str,
+    ssh_key: Path,
+    timeout_sec: float,
+) -> dict[str, Any]:
+    manager_args = active_ids or ["--none"]
+    remote = " ".join(
+        shlex.quote(item)
+        for item in ["docker", "exec", "ott-access-api", "node", LIVE_MANAGER_PATH, *manager_args]
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-i",
+                str(ssh_key),
+                f"{ssh_user}@{ORIGIN_IP}",
+                remote,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise MatrixExecutionError(f"LIVE channel manager failed: {exc}") from exc
+    if completed.returncode != 0:
+        raise MatrixExecutionError(
+            f"LIVE channel manager failed: {completed.stderr.strip() or completed.stdout[-1000:]}"
+        )
+    result = parse_json_output(completed.stdout)
+    if not result.get("ok") or sorted(result.get("active_content_ids", [])) != sorted(active_ids):
+        raise MatrixExecutionError(f"LIVE channel manager returned an unexpected state: {result}")
+    result["rolling_validation"] = wait_for_live_roll(active_ids)
+    return result
 
 
 def execute_one_run(
@@ -287,6 +410,30 @@ def execute_batch(
     manifest_output_dir: Path,
 ) -> dict[str, Any]:
     started_at = utc_now()
+    active_live_ids = active_live_ids_for_batch(batch)
+    try:
+        live_setup = configure_live_channels(
+            active_live_ids,
+            ssh_user=args.ssh_user,
+            ssh_key=args.ssh_key.expanduser().resolve(),
+            timeout_sec=args.live_setup_timeout_sec,
+        ) if not args.skip_live_management else {
+            "ok": True,
+            "active_content_ids": active_live_ids,
+            "bypassed": True,
+        }
+    except MatrixExecutionError as exc:
+        return {
+            "batch_id": batch["batch_id"],
+            "data_split": batch["data_split"],
+            "planned_client_count": batch["planned_client_count"],
+            "started_at": started_at,
+            "ended_at": utc_now(),
+            "status_counts": {"live_setup_failed": len(batch.get("runs", []))},
+            "passed": False,
+            "live_setup": {"passed": False, "error": str(exc)},
+            "runs": [],
+        }
     started_monotonic = time.monotonic()
     runs = list(batch.get("runs", []))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(runs))) as pool:
@@ -319,6 +466,7 @@ def execute_batch(
         "ended_at": utc_now(),
         "status_counts": dict(sorted(status_counts.items())),
         "passed": all(result.get("status") == "completed" for result in results),
+        "live_setup": live_setup,
         "runs": results,
     }
 
@@ -334,6 +482,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--remote-timeout-sec", type=float, default=1800.0)
     parser.add_argument("--validation-wait-sec", type=float, default=180.0)
     parser.add_argument("--skip-validation", action="store_true")
+    parser.add_argument("--live-setup-timeout-sec", type=float, default=60.0)
+    parser.add_argument("--skip-live-management", action="store_true")
     parser.add_argument("--lock-dir", type=Path, default=DEFAULT_LOCK_DIR)
     parser.add_argument("--gate-report", type=Path, help="passed collection-gate JSON; newest report is used by default")
     parser.add_argument("--max-gate-age-min", type=float, default=15.0)

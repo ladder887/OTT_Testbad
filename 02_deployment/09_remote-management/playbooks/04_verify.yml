@@ -127,6 +127,29 @@
           DB-only={{ catalog_hls_paths | difference(hls_content_paths) }},
           DB VOD/LIVE={{ catalog_vod_count }}/{{ catalog_live_count }}.
 
+    - name: Temporarily start every registered LIVE channel for rolling verification
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - ott-access-api
+          - node
+          - /app/src/scripts/manageLiveChannels.js
+          - --all
+      register: live_activation
+      changed_when: true
+
+    - name: Require successful LIVE activation
+      ansible.builtin.assert:
+        that:
+          - live_activation.rc == 0
+          - (live_activation.stdout | from_json).ok | bool
+        fail_msg: "Could not start every registered LIVE channel: {{ live_activation.stderr }}"
+
+    - name: Wait for initial LIVE playlists after encoder startup
+      ansible.builtin.pause:
+        seconds: 6
+
     - name: Verify that all LIVE playlists advance
       ansible.builtin.command:
         argv:
@@ -142,6 +165,28 @@
       register: live_verification
       changed_when: false
       failed_when: false
+
+    - name: Restore the default low-load LIVE channel set
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              'docker',
+              'exec',
+              'ott-access-api',
+              'node',
+              '/app/src/scripts/manageLiveChannels.js'
+            ] + default_active_live_content_ids
+          }}
+      register: live_restore
+      changed_when: true
+
+    - name: Require successful default LIVE restoration
+      ansible.builtin.assert:
+        that:
+          - live_restore.rc == 0
+          - (live_restore.stdout | from_json).ok | bool
+        fail_msg: "Could not restore default LIVE channels: {{ live_restore.stderr }}"
 
     - name: Require rolling LIVE playlists
       ansible.builtin.assert:

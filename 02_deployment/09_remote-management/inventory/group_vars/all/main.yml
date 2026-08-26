@@ -10,6 +10,8 @@ origin_thumbnail_dir: /srv/ott-media/thumbnails
 minimum_vod_count: 15
 minimum_live_count: 3
 live_probe_wait_seconds: 12
+default_active_live_content_ids:
+  - live_01
 required_renditions:
   - 1080p
   - 720p

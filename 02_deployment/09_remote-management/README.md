@@ -843,6 +843,11 @@ python3 03_experiments/03_orchestration/run_collection_matrix.py \
 확인하고 해당 stale lock을 제거한다. `--execute`는 최근 15분 이내의 가장 최신
 `passed: true` gate report를 자동 사용하며, 오래됐으면 gate부터 다시 실행한다.
 
+batch 실행 직전에 runner가 해당 split의 LIVE channel 하나만 켠다. train은 `live_01`,
+validation은 `live_02`, test는 `live_03`이다. 두 rendition의 media sequence가 진행되지
+않으면 client traffic을 시작하지 않는다. 세 channel을 동시에 계속 켜면 Origin Pi 5가
+포화되므로 `playbooks/04_verify.yml`의 짧은 전체 rolling 검사 외에는 사용하지 않는다.
+
 ## 18. dataset과 학습 smoke
 
 완료된 manifest와 Neo4j를 `cdn_token_id`로 결합한다.

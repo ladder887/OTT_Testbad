@@ -249,9 +249,10 @@ function getLivePidFilePath(safeHlsPath, resolution) {
 }
 
 async function stopLiveProcessByPidFile(pidFilePath) {
+  let pid = null
   try {
     const raw = await fs.promises.readFile(pidFilePath, 'utf8')
-    const pid = Number.parseInt(String(raw || '').trim(), 10)
+    pid = Number.parseInt(String(raw || '').trim(), 10)
 
     if (Number.isFinite(pid) && pid > 1) {
       try {
@@ -262,6 +263,25 @@ async function stopLiveProcessByPidFile(pidFilePath) {
     }
   } catch (error) {
     // PID 파일이 없으면 무시한다.
+  }
+
+  if (Number.isFinite(pid) && pid > 1) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        process.kill(pid, 0)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      } catch (error) {
+        pid = null
+        break
+      }
+    }
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch (error) {
+        // 종료 확인 직후 process가 끝난 경우는 무시한다.
+      }
+    }
   }
 
   await fs.promises.rm(pidFilePath, { force: true })

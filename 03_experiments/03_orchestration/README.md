@@ -126,3 +126,8 @@ runner는 각 logical client에 lock을 만들고 중복 사용을 거부한다.
 runtime metric으로 별도 측정해야 한다. 실제 실행에는 최근 15분 이내 생성된
 `passed: true` collection gate report가 필요하며, 기본적으로 가장 최근 report를 찾는다.
 각 execution report는 batch ID와 실행 시각을 파일명에 넣어 이전 결과를 덮어쓰지 않는다.
+
+matrix runner는 batch의 split에 맞춰 Origin에서 `live_01`, `live_02`, `live_03` 중 필요한
+channel 하나만 활성화한다. 시작한 channel의 1080p와 720p playlist가 실제로 진행되는지
+확인한 뒤 traffic을 시작한다. LIVE run이 없는 batch는 encoder를 모두 정지한다. 이를
+수동으로 우회하는 `--skip-live-management`는 장애 조사 외에는 사용하지 않는다.

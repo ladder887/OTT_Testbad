@@ -150,6 +150,25 @@ class CollectionMatrixTest(unittest.TestCase):
             with self.assertRaisesRegex(MATRIX_RUNNER.MatrixExecutionError, "minutes old"):
                 MATRIX_RUNNER.load_recent_gate_report(path, 15.0)
 
+    def test_matrix_batch_resolves_one_live_channel_from_its_split(self):
+        matrix = self.build()
+        expected = {"train": ["live_01"], "validation": ["live_02"], "test": ["live_03"]}
+        for batch in matrix["batches"]:
+            if any(run["scenario_id"] in {"N7", "A7"} for run in batch["runs"]):
+                self.assertEqual(
+                    MATRIX_RUNNER.active_live_ids_for_batch(batch),
+                    expected[batch["data_split"]],
+                )
+
+    def test_live_playlist_parser_requires_sequence_and_returns_latest_segment(self):
+        state = MATRIX_RUNNER.parse_live_playlist(
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:42\n#EXTINF:2.0,\nseg_00042.ts\n"
+            "#EXTINF:2.0,\nseg_00043.ts\n"
+        )
+        self.assertEqual(state, (42, "seg_00043.ts"))
+        with self.assertRaisesRegex(MATRIX_RUNNER.MatrixExecutionError, "no sequence"):
+            MATRIX_RUNNER.parse_live_playlist("#EXTM3U\n")
+
             path.write_text(
                 json.dumps({"passed": False, "sampled_at": datetime.now(timezone.utc).isoformat()}),
                 encoding="utf-8",

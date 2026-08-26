@@ -74,9 +74,18 @@ async function restoreRegisteredLiveStreams() {
   }
 
   const liveContents = await listContents(pgPool, { type: 'live' });
+  const configuredIds = String(process.env.RESTORE_LIVE_CONTENT_IDS || 'live_01')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const restoreAll = configuredIds.includes('*') || configuredIds.includes('all')
+  const selectedIds = new Set(configuredIds)
   let restored = 0;
 
   for (const content of liveContents) {
+    if (!restoreAll && !selectedIds.has(content.id)) {
+      continue;
+    }
     const sourceFilePath = resolveLiveSourceFile(content.sourcePath);
     if (!sourceFilePath) {
       console.warn(`Live stream ${content.id} has no sourcePath; skipping restore`);
@@ -103,7 +112,9 @@ async function restoreRegisteredLiveStreams() {
     }
   }
 
-  console.log(`Live stream restore complete: ${restored}/${liveContents.length}`);
+  console.log(
+    `Live stream restore complete: ${restored}/${liveContents.length}; active=${restoreAll ? 'all' : configuredIds.join(',')}`
+  );
 }
 
 ensureContentsSchema(pgPool)
