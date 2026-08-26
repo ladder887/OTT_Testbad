@@ -65,11 +65,15 @@
         - scrubber-nginx-*
         - filebeat-*
 
-    - name: Delete regular and legacy experiment log indices
+    - name: Delete documents from regular and legacy experiment log indices
       ansible.builtin.uri:
-        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all"
-        method: DELETE
-        status_code: 200
+        url: "http://127.0.0.1:9200/access-gateway-nginx-*,.ds-access-gateway-nginx-*,ott-api-events-*,scrubber-nginx-*,.ds-scrubber-nginx-*,filebeat-*,.ds-filebeat-*/_delete_by_query?allow_no_indices=true&ignore_unavailable=true&expand_wildcards=all&conflicts=proceed&refresh=true"
+        method: POST
+        body_format: json
+        body:
+          query:
+            match_all: {}
+        status_code: [200, 404]
         return_content: true
 
     - name: Delete all experiment graph nodes and relationships
