@@ -433,6 +433,10 @@ class GraphPipelineParserTest(unittest.TestCase):
             if "MERGE (r:Request" in query
         ]
         self.assertEqual(request_writes[0]["status"], 403)
+        self.assertRegex(
+            request_writes[0]["graph_ingested_at"],
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$",
+        )
 
     def test_replay_sensitive_aggregates_only_change_for_new_request_links(self):
         parsed = self.pipeline.parse_nginx_log(

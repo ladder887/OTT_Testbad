@@ -207,6 +207,7 @@ class GraphPipeline:
                 "CREATE INDEX request_id IF NOT EXISTS FOR (r:Request) ON (r.request_id)",
                 "CREATE INDEX request_kind IF NOT EXISTS FOR (r:Request) ON (r.kind)",
                 "CREATE INDEX request_target_content IF NOT EXISTS FOR (r:Request) ON (r.target_content_id)",
+                "CREATE INDEX request_graph_ingested_at IF NOT EXISTS FOR (r:Request) ON (r.graph_ingested_at)",
                 "CREATE INDEX referrer_domain IF NOT EXISTS FOR (r:Referrer) ON (r.domain)",
             ]
             for idx in indexes:
@@ -1162,7 +1163,9 @@ class GraphPipeline:
                 session.run(
                     """
                     MERGE (r:Request {request_id: $request_id})
-                    ON CREATE SET r.first_seen = datetime($timestamp)
+                    ON CREATE SET
+                        r.first_seen = datetime($timestamp),
+                        r.graph_ingested_at = datetime($graph_ingested_at)
                     SET
                         r.timestamp = datetime($timestamp),
                         r.method = $method,
@@ -1190,6 +1193,9 @@ class GraphPipeline:
                     """,
                     request_id=request_id,
                     timestamp=timestamp,
+                    graph_ingested_at=datetime.now(timezone.utc).isoformat(
+                        timespec="milliseconds"
+                    ).replace("+00:00", "Z"),
                     method=log.get("method", "GET"),
                     request_path=request_path,
                     request_kind=request_kind,
