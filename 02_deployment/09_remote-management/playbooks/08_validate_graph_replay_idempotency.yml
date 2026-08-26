@@ -23,24 +23,25 @@
   gather_facts: false
   vars:
     repository_root: "{{ playbook_dir }}/../../.."
-    snapshot_id: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
-    baseline_path: "{{ repository_root }}/06_outputs/01_data_quality/graph_replay_{{ snapshot_id }}_before.json"
 
   tasks:
+    - name: Allocate one stable replay validation ID
+      ansible.builtin.set_fact:
+        graph_replay_snapshot_id: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+    - name: Publish the baseline path
+      ansible.builtin.set_fact:
+        graph_replay_baseline_path: "{{ repository_root }}/06_outputs/01_data_quality/graph_replay_{{ graph_replay_snapshot_id }}_before.json"
+
     - name: Snapshot consistent graph aggregates before replay
       ansible.builtin.command:
         argv:
           - python3
           - "{{ repository_root }}/03_experiments/05_validation/snapshot_graph_state.py"
           - --output
-          - "{{ baseline_path }}"
+          - "{{ graph_replay_baseline_path }}"
       register: baseline_snapshot
       changed_when: false
-
-    - name: Publish the baseline path
-      ansible.builtin.set_fact:
-        graph_replay_baseline_path: "{{ baseline_path }}"
-        graph_replay_snapshot_id: "{{ snapshot_id }}"
 
 - name: Read the retained Elasticsearch boundary
   hosts: analysis_storage
