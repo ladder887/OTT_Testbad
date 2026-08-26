@@ -90,6 +90,7 @@ async function emitApiEvent(req, event) {
   try {
     await esClient.index({
       index: `ott-api-events-${dateSuffix}`,
+      pipeline: 'ott-event-ingest-timestamp',
       document,
     })
     return true

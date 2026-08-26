@@ -23,6 +23,7 @@ filebeat.inputs:
 output.elasticsearch:
   hosts: ["192.168.0.120:9200"]
   index: "access-gateway-nginx-%{+yyyy.MM.dd}"
+  pipeline: "ott-event-ingest-timestamp"
 
 setup.ilm.enabled: false
 setup.template.enabled: true

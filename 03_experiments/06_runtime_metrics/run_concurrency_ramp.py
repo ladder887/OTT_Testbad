@@ -229,6 +229,10 @@ def stage_summary(
         int(item.get("elasticsearch", {}).get("status_4xx_count") or 0)
         for item in measured_samples
     )
+    missing_ingest_timestamps = sum(
+        int(item.get("elasticsearch", {}).get("missing_ingest_timestamp_count") or 0)
+        for item in measured_samples
+    )
     http_failures = sum(int(item.get("http_failure_count") or 0) for item in results)
     http_retries = sum(int(item.get("http_retry_count") or 0) for item in results)
     sample_errors = sorted({error for item in samples for error in item.get("errors", [])})
@@ -276,6 +280,10 @@ def stage_summary(
         errors.append(f"clients reported {http_failures} HTTP failures")
     if lag_summary.get("event_query_truncated"):
         errors.append("Elasticsearch runtime query was truncated")
+    if missing_ingest_timestamps:
+        errors.append(
+            f"{missing_ingest_timestamps} Elasticsearch documents lack event.ingested"
+        )
     if sample_errors:
         errors.extend(sample_errors)
     if not recovery_completed:
@@ -301,6 +309,7 @@ def stage_summary(
         "edge_document_count": edge_documents,
         "edge_status_4xx_count": status_4xx,
         "edge_status_4xx_ratio": round(status_4xx / edge_documents, 6) if edge_documents else None,
+        "missing_ingest_timestamp_count": missing_ingest_timestamps,
         "client_http_retry_count": http_retries,
         "client_http_failure_count": http_failures,
         "graph_recovery_completed": recovery_completed,

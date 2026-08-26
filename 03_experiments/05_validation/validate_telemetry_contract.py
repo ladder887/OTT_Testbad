@@ -123,6 +123,11 @@ def validate_edge_documents(documents: list[dict]) -> tuple[list[str], set[str]]
             errors.append(f"edge HLS[{index}] has an invalid event timestamp")
         elif abs((event_time - raw_time).total_seconds()) > 0.01:
             errors.append(f"edge HLS[{index}] @timestamp is not the original event time")
+        ingested_time = parse_iso(document.get("event", {}).get("ingested"))
+        if ingested_time is None:
+            errors.append(f"edge HLS[{index}] has no Elasticsearch ingestion time")
+        elif event_time and ingested_time < event_time:
+            errors.append(f"edge HLS[{index}] ingestion time precedes event time")
 
         cdn_token_id = str(document.get("cdn_token_id", ""))
         expected_token_id = token_id_from_jti(document.get("token_jti"))
@@ -173,6 +178,11 @@ def validate_api_documents(documents: list[dict]) -> tuple[list[str], set[str]]:
             errors.append(f"api token_issued[{index}] has an invalid event timestamp")
         elif abs((event_time - raw_time).total_seconds()) > 0.01:
             errors.append(f"api token_issued[{index}] @timestamp is not the original event time")
+        ingested_time = parse_iso(document.get("event", {}).get("ingested"))
+        if ingested_time is None:
+            errors.append(f"api token_issued[{index}] has no Elasticsearch ingestion time")
+        elif event_time and ingested_time < event_time:
+            errors.append(f"api token_issued[{index}] ingestion time precedes event time")
 
         token_id = str(document.get("cdn_token_id", ""))
         expected_token_id = token_id_from_jti(document.get("token_jti"))

@@ -20,6 +20,7 @@ class TelemetryContractTest(unittest.TestCase):
         token_id = VALIDATOR.token_id_from_jti(token_jti)
         edge = {
             "@timestamp": "2026-08-19T00:00:00.123Z",
+            "event": {"ingested": "2026-08-19T00:00:01.123Z"},
             "event_time_epoch": "1787097600.123",
             "event_source": "edge-nginx",
             "client_ip": "192.168.0.151",
@@ -38,6 +39,7 @@ class TelemetryContractTest(unittest.TestCase):
         }
         api = {
             "@timestamp": "2026-08-19T00:00:00.000Z",
+            "event": {"ingested": "2026-08-19T00:00:01.000Z"},
             "event_time_epoch": 1787097600.0,
             "event_source": "ott-api",
             "event_kind": "token_issued",
@@ -64,9 +66,33 @@ class TelemetryContractTest(unittest.TestCase):
         )
         self.assertEqual(len(errors), 1)
 
+    def test_missing_ingestion_timestamp_is_rejected(self):
+        edge = {
+            "@timestamp": "2026-08-19T00:00:00.123Z",
+            "event_time_epoch": "1787097600.123",
+            "client_ip": "192.168.0.151",
+            "edge_server": "edge-kr",
+            "uri": "/hls/video_01/720p/seg_00001.ts",
+            "request_uri": "/hls/video_01/720p/seg_00001.ts",
+            "query_string": "-",
+            "status": "200",
+            "request_time_sec": "0.004",
+            "request_id": "edge-kr-1787097600.123-1-1",
+            "token_jti": "-",
+            "cdn_token_id": "-",
+            "token_playback_id": "playback-1",
+            "observed_device_id": "device_1111111111111111",
+            "session_token": "-",
+        }
+
+        errors, _ = VALIDATOR.validate_edge_documents([edge])
+
+        self.assertTrue(any("no Elasticsearch ingestion time" in error for error in errors))
+
     def test_mismatched_jti_and_token_id_is_rejected(self):
         api = {
             "@timestamp": "2026-08-19T00:00:00.000Z",
+            "event": {"ingested": "2026-08-19T00:00:01.000Z"},
             "event_time_epoch": 1787097600.0,
             "event_source": "ott-api",
             "event_kind": "token_issued",

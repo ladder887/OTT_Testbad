@@ -90,12 +90,14 @@ test('API telemetry omits experiment provenance and raw token query data', async
     clientIp: '192.168.0.151',
   })
   let indexedDocument
+  let indexedPipeline
   const request = {
     app: {
       locals: {
         esClient: {
-          index: async ({ document }) => {
+          index: async ({ document, pipeline }) => {
             indexedDocument = document
+            indexedPipeline = pipeline
           },
         },
       },
@@ -134,6 +136,7 @@ test('API telemetry omits experiment provenance and raw token query data', async
   assert.equal(indexedDocument.token_jti, issued.payload.jti)
   assert.equal(indexedDocument.token_playback_id, 'playback-1')
   assert.equal(indexedDocument.observed_device_id, 'device_1111111111111111')
+  assert.equal(indexedPipeline, 'ott-event-ingest-timestamp')
   for (const forbidden of [
     'token_label',
     'token_run_id',

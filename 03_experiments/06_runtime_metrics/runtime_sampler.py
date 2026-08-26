@@ -143,6 +143,17 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def source_value(source: dict[str, Any], field: str) -> Any:
+    if field in source:
+        return source[field]
+    current: Any = source
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
 def percentile(values: list[float], percent: float) -> float | None:
     if not values:
         return None
@@ -302,7 +313,7 @@ def event_epoch(source: dict[str, Any]) -> float | None:
             return float(raw_epoch)
         except (TypeError, ValueError):
             pass
-    parsed = parse_datetime(source.get("timestamp") or source.get("event.created"))
+    parsed = parse_datetime(source.get("timestamp") or source_value(source, "event.created"))
     return parsed.timestamp() if parsed else None
 
 
@@ -381,6 +392,7 @@ class RuntimeSampler:
                 "@timestamp",
                 "timestamp",
                 "event.created",
+                "event.ingested",
                 "event_time_epoch",
                 "bytes_sent",
                 "status",
@@ -419,18 +431,24 @@ class RuntimeSampler:
         cache_statuses: Counter[str] = Counter()
         edge_ids: Counter[str] = Counter()
         ingest_lags: list[float] = []
+        missing_ingest_timestamps = 0
         for hit in hits:
             key = f"{hit.get('_index', '')}:{hit.get('_id', '')}"
             if key in self.seen_es_documents:
                 continue
             self.seen_es_documents.add(key)
             source = hit.get("_source", {})
-            ingested = parse_datetime(source.get("@timestamp"))
-            if ingested and (self.latest_es_timestamp is None or ingested > self.latest_es_timestamp):
-                self.latest_es_timestamp = ingested
+            event_timestamp = parse_datetime(source.get("@timestamp"))
+            if event_timestamp and (
+                self.latest_es_timestamp is None or event_timestamp > self.latest_es_timestamp
+            ):
+                self.latest_es_timestamp = event_timestamp
             event_time = event_epoch(source)
+            ingested = parse_datetime(source_value(source, "event.ingested"))
             if ingested and event_time is not None:
                 ingest_lags.append((ingested.timestamp() - event_time) * 1000.0)
+            else:
+                missing_ingest_timestamps += 1
             index_name = str(hit.get("_index") or "")
             if "access-gateway-nginx" in index_name:
                 edge_count += 1
@@ -471,6 +489,7 @@ class RuntimeSampler:
             "cache_status_counts": dict(sorted(cache_statuses.items())),
             "edge_counts": dict(sorted(edge_ids.items())),
             "ingest_lag_ms": percentile_summary(ingest_lags),
+            "missing_ingest_timestamp_count": missing_ingest_timestamps,
             "truncated": truncated,
         }
 

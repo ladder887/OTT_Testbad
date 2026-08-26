@@ -24,6 +24,15 @@ RAMP = load_module("test_runtime_ramp_module", "run_concurrency_ramp.py")
 
 
 class RuntimeSamplerTest(unittest.TestCase):
+    def test_nested_elasticsearch_source_field_is_read(self):
+        self.assertEqual(
+            SAMPLER.source_value(
+                {"event": {"ingested": "2026-08-26T00:00:01Z"}},
+                "event.ingested",
+            ),
+            "2026-08-26T00:00:01Z",
+        )
+
     def test_remote_probe_excludes_the_docker_exec_wrapper(self):
         self.assertIn("not line.lstrip().startswith('docker exec ')", SAMPLER.REMOTE_SAMPLE)
 

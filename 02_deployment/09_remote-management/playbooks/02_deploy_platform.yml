@@ -45,6 +45,19 @@
       delay: 5
       until: elasticsearch_health.status == 200
 
+    - name: Install the event ingestion timestamp pipeline
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9200/_ingest/pipeline/ott-event-ingest-timestamp
+        method: PUT
+        body_format: json
+        body:
+          description: Preserve Elasticsearch ingestion time separately from the original event time.
+          processors:
+            - set:
+                field: event.ingested
+                value: "{{ '{{{_ingest.timestamp}}}' }}"
+        status_code: [200]
+
 - name: Start Origin and API without changing media
   hosts: origin_api
   gather_facts: false
