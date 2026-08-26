@@ -331,6 +331,17 @@ def choose_variant(variants: list[HlsVariant], rendition: str) -> HlsVariant:
     raise AgentError(f"requested rendition is unavailable: {rendition}")
 
 
+def live_observations_advanced(observations: list[dict[str, Any]]) -> bool:
+    if len(observations) < 2:
+        return False
+    first = observations[0]
+    last = observations[-1]
+    return (
+        _safe_int(last.get("media_sequence"), -1) > _safe_int(first.get("media_sequence"), -1)
+        or _safe_int(last.get("latest_sequence"), -1) > _safe_int(first.get("latest_sequence"), -1)
+    )
+
+
 class HttpClient:
     def __init__(
         self,
@@ -704,11 +715,7 @@ class PlaybackRuntime:
             poll_interval = max(0.25, playlist.target_duration_sec * poll_factor)
             time.sleep(min(poll_interval, remaining))
 
-        rolling = (
-            first_media_sequence is not None
-            and last_media_sequence is not None
-            and last_media_sequence > first_media_sequence
-        )
+        rolling = live_observations_advanced(observations)
         return {
             "mode": "live",
             "rendition_height": variant.height,
@@ -718,6 +725,8 @@ class PlaybackRuntime:
             "failed_segments": failed_segments,
             "first_media_sequence": first_media_sequence,
             "last_media_sequence": last_media_sequence,
+            "first_latest_sequence": observations[0]["latest_sequence"] if observations else None,
+            "last_latest_sequence": observations[-1]["latest_sequence"] if observations else None,
             "rolling_playlist": rolling,
             "observations": observations,
         }

@@ -78,6 +78,23 @@ seg_00042.ts
 
         self.assertTrue(parsed.end_list)
 
+    def test_live_roll_is_detected_before_the_sliding_window_fills(self):
+        observations = [
+            {"media_sequence": 0, "latest_sequence": 4},
+            {"media_sequence": 0, "latest_sequence": 7},
+            {"media_sequence": 0, "latest_sequence": 11},
+        ]
+
+        self.assertTrue(AGENT.live_observations_advanced(observations))
+        self.assertFalse(
+            AGENT.live_observations_advanced(
+                [
+                    {"media_sequence": 0, "latest_sequence": 4},
+                    {"media_sequence": 0, "latest_sequence": 4},
+                ]
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

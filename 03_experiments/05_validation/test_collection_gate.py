@@ -32,11 +32,15 @@ class CollectionGateTest(unittest.TestCase):
             "minimum_running_containers": 10,
             "require_docker": True,
             "unhealthy_container_count": 0,
+            "repository_path": "/home/ottadmin/OTT_Testbad",
+            "repository_revision": "a" * 40,
+            "repository_probe_ok": True,
         }
 
     def evaluate(self, metrics):
         return GATE.evaluate_node(
             metrics,
+            expected_revision="a" * 40,
             max_clock_offset_ms=1500.0,
             max_load_per_cpu=1.25,
             max_memory_used_percent=90.0,
@@ -63,6 +67,14 @@ class CollectionGateTest(unittest.TestCase):
         self.assertTrue(any("clock offset" in item for item in errors))
         self.assertTrue(any("load per CPU" in item for item in errors))
         self.assertTrue(any("running containers" in item for item in errors))
+
+    def test_repository_revision_mismatch_is_reported(self):
+        metrics = self.healthy_metrics()
+        metrics["repository_revision"] = "b" * 40
+
+        errors = self.evaluate(metrics)
+
+        self.assertTrue(any("does not match collection revision" in item for item in errors))
 
 
 if __name__ == "__main__":

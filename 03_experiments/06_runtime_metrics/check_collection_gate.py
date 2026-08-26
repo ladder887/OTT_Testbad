@@ -87,6 +87,10 @@ docker_rc, docker_ids = command(['docker', 'ps', '--quiet'])
 unhealthy_rc, unhealthy_ids = command([
     'docker', 'ps', '--quiet', '--filter', 'health=unhealthy'
 ])
+repository_path = os.path.expanduser('~/OTT_Testbad')
+repository_rc, repository_revision = command([
+    'git', '-C', repository_path, 'rev-parse', 'HEAD'
+])
 print(json.dumps({
     'sample_epoch_ms': time.time_ns() // 1_000_000,
     'hostname': os.uname().nodename,
@@ -99,6 +103,9 @@ print(json.dumps({
     'running_container_count': len(docker_ids.splitlines()) if docker_rc == 0 and docker_ids else 0,
     'unhealthy_container_count': len(unhealthy_ids.splitlines()) if unhealthy_rc == 0 and unhealthy_ids else 0,
     'docker_probe_ok': docker_rc == 0,
+    'repository_path': repository_path,
+    'repository_revision': repository_revision,
+    'repository_probe_ok': repository_rc == 0,
 }, sort_keys=True))
 """
 
@@ -193,6 +200,7 @@ def probe_local_control(node: Node, timeout_sec: float) -> dict[str, Any]:
 def evaluate_node(
     metrics: dict[str, Any],
     *,
+    expected_revision: str | None,
     max_clock_offset_ms: float,
     max_load_per_cpu: float,
     max_memory_used_percent: float,
@@ -200,6 +208,16 @@ def evaluate_node(
 ) -> list[str]:
     errors: list[str] = []
     name = str(metrics.get("name") or "unknown")
+    if expected_revision:
+        if not metrics.get("repository_probe_ok"):
+            errors.append(
+                f"{name}: cannot read Git revision from {metrics.get('repository_path', '~/OTT_Testbad')}"
+            )
+        elif metrics.get("repository_revision") != expected_revision:
+            errors.append(
+                f"{name}: repository revision {metrics.get('repository_revision') or 'unknown'} "
+                f"does not match collection revision {expected_revision}"
+            )
     if not metrics.get("ntp_synchronized"):
         errors.append(f"{name}: NTP is not synchronized ({metrics.get('ntp_value', 'unknown')})")
     if abs(float(metrics.get("clock_offset_ms") or 0.0)) > max_clock_offset_ms:
@@ -257,6 +275,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-load-per-cpu", type=float, default=1.25)
     parser.add_argument("--max-memory-used-percent", type=float, default=90.0)
     parser.add_argument("--min-disk-free-percent", type=float, default=10.0)
+    parser.add_argument(
+        "--expected-revision",
+        help="Full Git commit required on every node (default: current control-node checkout)",
+    )
     parser.add_argument("--skip-endpoints", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
@@ -267,6 +289,17 @@ def main() -> int:
     key = args.ssh_key.expanduser().resolve()
     node_reports: list[dict[str, Any]] = []
     errors: list[str] = []
+    expected_revision = str(args.expected_revision or "").strip()
+    if not expected_revision:
+        revision_probe = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        expected_revision = revision_probe.stdout.strip() if revision_probe.returncode == 0 else ""
+    if not expected_revision:
+        errors.append("ott-control: cannot determine the collection Git revision")
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(NODES) + 1) as pool:
         futures = {
             pool.submit(probe_node, node, args.ssh_user, key, args.ssh_timeout_sec): node for node in NODES
@@ -279,6 +312,7 @@ def main() -> int:
                 errors.extend(
                     evaluate_node(
                         metrics,
+                        expected_revision=expected_revision or None,
                         max_clock_offset_ms=args.max_clock_offset_ms,
                         max_load_per_cpu=args.max_load_per_cpu,
                         max_memory_used_percent=args.max_memory_used_percent,
@@ -298,9 +332,10 @@ def main() -> int:
         if not item.get("passed")
     )
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "sampled_at": utc_now(),
         "passed": not errors,
+        "expected_repository_revision": expected_revision or None,
         "thresholds": {
             "max_clock_offset_ms": args.max_clock_offset_ms,
             "max_load_per_cpu": args.max_load_per_cpu,
