@@ -221,8 +221,24 @@ def audit(
     validation_passed = 0
     retry_count = 0
     failure_count = 0
+    superseded_failed_manifest_count = 0
     dataset_prefixes: Counter[str] = Counter()
     run_reports: list[dict[str, Any]] = []
+
+    completed_matrix_run_keys: Counter[str] = Counter()
+    for path in manifest_paths:
+        try:
+            candidate = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        matrix_run_key = str(candidate.get("parameters", {}).get("matrix_run_key") or "")
+        if candidate.get("status") == "completed" and matrix_run_key:
+            completed_matrix_run_keys[matrix_run_key] += 1
+    duplicate_completed_keys = sorted(
+        key for key, count in completed_matrix_run_keys.items() if count > 1
+    )
+    if duplicate_completed_keys:
+        errors.append(f"matrix run keys have multiple completed manifests: {duplicate_completed_keys}")
 
     for path in manifest_paths:
         try:
@@ -234,7 +250,28 @@ def audit(
         scenario_id = str(manifest.get("scenario_id") or "")
         class_name = "normal" if scenario_id.startswith("N") else "attack"
         status = str(manifest.get("status") or "")
+        matrix_run_key = str(manifest.get("parameters", {}).get("matrix_run_key") or "")
         run_errors: list[str] = []
+
+        if status != "completed" and matrix_run_key and completed_matrix_run_keys[matrix_run_key] == 1:
+            superseded_failed_manifest_count += 1
+            warnings.append(
+                f"{path.name}: superseded failed attempt for matrix run key {matrix_run_key}"
+            )
+            run_reports.append(
+                {
+                    "manifest": str(path),
+                    "run_id": run_id,
+                    "scenario_id": scenario_id,
+                    "scenario_variant": str(manifest.get("parameters", {}).get("scenario_variant") or ""),
+                    "matrix_run_key": matrix_run_key,
+                    "status": "superseded_failed",
+                    "validation_passed": False,
+                    "selected_client_count": len(selected_clients(manifest)),
+                    "errors": [],
+                }
+            )
+            continue
 
         if not run_id or run_id in run_ids:
             run_errors.append(f"duplicate or missing run_id: {run_id or '<missing>'}")
@@ -409,6 +446,7 @@ def audit(
         "missing_applied_network_profiles": missing_applied_profiles,
         "http_retry_count": retry_count,
         "http_failure_count": failure_count,
+        "superseded_failed_manifest_count": superseded_failed_manifest_count,
         "dataset_prefixes": dict(sorted(dataset_prefixes.items())),
         "errors": errors,
         "warnings": warnings,

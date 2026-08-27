@@ -141,21 +141,36 @@ def parse_json_output(text: str, command_name: str) -> dict[str, Any]:
     return value
 
 
-def discover_completed_batches(manifest_dir: Path, matrix_id: str) -> set[str]:
-    completed: set[str] = set()
+def discover_completed_batches(manifest_dir: Path, matrix: dict[str, Any]) -> set[str]:
+    successful_runs: dict[str, set[str]] = {
+        str(batch["batch_id"]): set()
+        for batch in matrix.get("batches", [])
+    }
     if not manifest_dir.exists():
-        return completed
+        return set()
     for path in manifest_dir.glob("*.execution.json"):
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if report.get("matrix_id") != matrix_id or not report.get("passed"):
+        if report.get("matrix_id") != matrix.get("matrix_id"):
             continue
         batches = report.get("batches") or []
         for batch in batches:
-            if batch.get("passed") and batch.get("batch_id"):
-                completed.add(str(batch["batch_id"]))
+            batch_id = str(batch.get("batch_id") or "")
+            if batch_id not in successful_runs:
+                continue
+            for run in batch.get("runs") or []:
+                if run.get("status") == "completed" and run.get("validation_passed") is True:
+                    run_key = str(run.get("run_key") or "")
+                    if run_key:
+                        successful_runs[batch_id].add(run_key)
+    completed: set[str] = set()
+    for batch in matrix.get("batches", []):
+        batch_id = str(batch["batch_id"])
+        expected = {str(run["run_key"]) for run in batch.get("runs", [])}
+        if expected and expected.issubset(successful_runs[batch_id]):
+            completed.add(batch_id)
     return completed
 
 
@@ -266,7 +281,7 @@ def run_campaign(
     state = load_state(state_path, matrix, matrix_path, matrix_sha256)
     manifest_dir = resolve_repo_path(str(matrix["manifest_output_dir"]))
     completed = set(str(item) for item in state["completed_batch_ids"])
-    completed.update(discover_completed_batches(manifest_dir, matrix["matrix_id"]))
+    completed.update(discover_completed_batches(manifest_dir, matrix))
     state["completed_batch_ids"] = sorted(completed)
     selected_ids = [str(batch["batch_id"]) for batch in batches]
     validate_split_order(matrix, batches, completed)

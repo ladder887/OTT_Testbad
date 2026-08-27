@@ -21,6 +21,10 @@
 
 과거 collector는 `99_archive/`에서 참고할 수 있지만 그대로 복사하지 않는다.
 
+A1 VOD consumers의 시작 위치는 영상 길이에 고정된 절대 segment 번호가 아니라 재생목록
+앞 절반의 상대 위치로 분산한다. 따라서 짧은 VOD에서도 fan-out 의미를 유지하면서
+playlist 범위를 벗어나지 않는다.
+
 `--smoke`는 segment 수, pause, duration을 줄여 통신과 결합만 검사한다. smoke manifest의
 `timing_scaled=true`인 데이터는 정식 dataset에 섞지 않는다.
 

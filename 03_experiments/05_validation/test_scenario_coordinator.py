@@ -98,6 +98,10 @@ class ScenarioCoordinatorTest(unittest.TestCase):
         binding = manifest["token_bindings"][0]
         self.assertEqual(len(binding["consumer_logical_client_ids"]), 2)
         self.assertNotIn(binding["owner_logical_client_id"], binding["consumer_logical_client_ids"])
+        phases = [item["traffic"]["phases"][0] for item in manifest["parameters"]["consumers"]]
+        self.assertTrue(all(phase["start_mode"] == "fraction" for phase in phases))
+        self.assertEqual([phase["start_fraction"] for phase in phases], [0.0, 0.25])
+        self.assertTrue(all(0.0 <= phase["start_fraction"] < 0.5 for phase in phases))
 
     def test_n1_catalog_preview_uses_multiple_contents_and_separate_tokens(self):
         manifest, _ = self.run_scenario("N1", "catalog_preview")

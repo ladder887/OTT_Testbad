@@ -285,6 +285,55 @@ class CollectionAuditTest(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertTrue(any("validation report is missing" in item for item in report["errors"]))
 
+    def test_repaired_matrix_run_supersedes_failed_manifest(self):
+        client = {
+            "logical_client_id": "lc001",
+            "physical_host_id": "pi01",
+            "source_ip": "192.168.0.151",
+            "edge_id": "edge-kr",
+            "network_profile_id": "P0",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            base = {
+                "dataset_prefix": "tnsm_100lc_repair",
+                "scenario_id": "N1",
+                "parameters": {
+                    "matrix_run_key": "train_n1_0001",
+                    "scenario_variant": "standard",
+                    "selected_clients": [client],
+                    "client_results": [{"logical_client_id": "lc001"}],
+                },
+            }
+            failed = root / "failed.json"
+            failed.write_text(
+                json.dumps({**base, "run_id": "failed-run", "status": "failed"}),
+                encoding="utf-8",
+            )
+            completed = root / "completed.json"
+            completed.write_text(
+                json.dumps(
+                    {
+                        **base,
+                        "run_id": "completed-run",
+                        "status": "completed",
+                        "token_bindings": [
+                            {"cdn_token_id": "cdn_1", "content_id": "video_01"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed.with_suffix(".validation.json").write_text(
+                json.dumps({"passed": True}), encoding="utf-8"
+            )
+
+            report = COLLECTION.audit([failed, completed], {"lc001": client}, "scenario")
+
+        self.assertEqual(report["superseded_failed_manifest_count"], 1)
+        self.assertFalse(any("status is failed" in item for item in report["errors"]))
+        self.assertTrue(any("superseded failed attempt" in item for item in report["warnings"]))
+
 
 class DatasetAuditTest(unittest.TestCase):
     def test_reports_single_feature_label_proxy(self):

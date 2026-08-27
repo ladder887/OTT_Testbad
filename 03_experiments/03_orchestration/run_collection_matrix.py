@@ -425,6 +425,43 @@ def select_batches(matrix: dict[str, Any], batch_ids: tuple[str, ...], all_batch
     return selected
 
 
+def select_run_subset(
+    batches: list[dict[str, Any]],
+    run_keys: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    if not run_keys:
+        return batches
+    if len(batches) != 1:
+        raise MatrixExecutionError("--run-key repair requires exactly one --batch-id")
+    requested = set(run_keys)
+    if len(requested) != len(run_keys):
+        raise MatrixExecutionError("--run-key values cannot contain duplicates")
+    batch = batches[0]
+    all_runs = list(batch.get("runs", []))
+    selected_runs = [
+        {**run, "start_offset_sec": 0.0}
+        for run in all_runs
+        if str(run.get("run_key")) in requested
+    ]
+    missing = sorted(requested - {str(run.get("run_key")) for run in selected_runs})
+    if missing:
+        raise MatrixExecutionError(f"unknown run keys for {batch.get('batch_id')}: {missing}")
+    selected_clients = {
+        str(client_id)
+        for run in selected_runs
+        for client_id in run.get("reserved_client_ids", [])
+    }
+    return [
+        {
+            **batch,
+            "runs": selected_runs,
+            "planned_client_count": len(selected_clients),
+            "full_batch_run_count": len(all_runs),
+            "run_repair": True,
+        }
+    ]
+
+
 def execute_batch(
     matrix: dict[str, Any],
     batch: dict[str, Any],
@@ -449,6 +486,9 @@ def execute_batch(
             "batch_id": batch["batch_id"],
             "data_split": batch["data_split"],
             "planned_client_count": batch["planned_client_count"],
+            "selected_run_count": len(batch.get("runs", [])),
+            "full_batch_run_count": int(batch.get("full_batch_run_count") or len(batch.get("runs", []))),
+            "run_repair": bool(batch.get("run_repair")),
             "started_at": started_at,
             "ended_at": utc_now(),
             "status_counts": {"live_setup_failed": len(batch.get("runs", []))},
@@ -484,6 +524,9 @@ def execute_batch(
         "batch_id": batch["batch_id"],
         "data_split": batch["data_split"],
         "planned_client_count": batch["planned_client_count"],
+        "selected_run_count": len(runs),
+        "full_batch_run_count": int(batch.get("full_batch_run_count") or len(runs)),
+        "run_repair": bool(batch.get("run_repair")),
         "started_at": started_at,
         "ended_at": utc_now(),
         "status_counts": dict(sorted(status_counts.items())),
@@ -499,6 +542,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true", help="run traffic; without this flag only validate and summarize")
     parser.add_argument("--batch-id", action="append", default=[])
     parser.add_argument("--all-batches", action="store_true")
+    parser.add_argument(
+        "--run-key",
+        action="append",
+        default=[],
+        help="execute only selected runs from one batch when repairing a partial failure",
+    )
     parser.add_argument("--ssh-user", default="ottadmin")
     parser.add_argument("--ssh-key", type=Path, default=Path.home() / ".ssh" / "ott_lab_ed25519")
     parser.add_argument("--remote-timeout-sec", type=float, default=1800.0)
@@ -519,21 +568,29 @@ def main() -> int:
     try:
         matrix_path = args.matrix.resolve()
         matrix = load_matrix(matrix_path)
+        if not args.execute and not args.batch_id and not args.all_batches:
+            batches = list(matrix.get("batches", []))
+        else:
+            batches = select_batches(matrix, tuple(args.batch_id), args.all_batches)
+        batches = select_run_subset(batches, tuple(args.run_key))
         if not args.execute:
             summary = {
                 "matrix_id": matrix["matrix_id"],
                 "dataset_prefix": matrix["dataset_prefix"],
-                "batch_count": len(matrix.get("batches", [])),
-                "run_count": sum(len(batch.get("runs", [])) for batch in matrix.get("batches", [])),
+                "batch_count": len(batches),
+                "run_count": sum(len(batch.get("runs", [])) for batch in batches),
+                "selected_batch_ids": [batch["batch_id"] for batch in batches],
+                "selected_run_keys": [
+                    run["run_key"] for batch in batches for run in batch.get("runs", [])
+                ],
                 "planned_client_counts": {
-                    batch["batch_id"]: batch["planned_client_count"] for batch in matrix.get("batches", [])
+                    batch["batch_id"]: batch["planned_client_count"] for batch in batches
                 },
                 "validated": True,
                 "executed": False,
             }
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
-        batches = select_batches(matrix, tuple(args.batch_id), args.all_batches)
         gate_path = None
         gate_report = None
         if not args.skip_gate:
@@ -552,6 +609,7 @@ def main() -> int:
         "gate_report_path": str(gate_path) if gate_path else None,
         "gate_sampled_at": gate_report.get("sampled_at") if gate_report else None,
         "gate_bypassed": bool(args.skip_gate),
+        "run_filter": sorted(args.run_key),
         "started_at": utc_now(),
         "batches": [],
     }

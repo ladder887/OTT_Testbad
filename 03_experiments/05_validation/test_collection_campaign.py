@@ -23,9 +23,21 @@ class CollectionCampaignTest(unittest.TestCase):
             "phase": "main",
             "manifest_output_dir": manifest_dir,
             "batches": [
-                {"batch_id": "train_b001", "data_split": "train", "runs": []},
-                {"batch_id": "train_b002", "data_split": "train", "runs": []},
-                {"batch_id": "test_b001", "data_split": "test", "runs": []},
+                {
+                    "batch_id": "train_b001",
+                    "data_split": "train",
+                    "runs": [{"run_key": "train-run-1"}],
+                },
+                {
+                    "batch_id": "train_b002",
+                    "data_split": "train",
+                    "runs": [{"run_key": "train-run-2"}],
+                },
+                {
+                    "batch_id": "test_b001",
+                    "data_split": "test",
+                    "runs": [{"run_key": "test-run-1"}],
+                },
             ],
         }
 
@@ -55,13 +67,81 @@ class CollectionCampaignTest(unittest.TestCase):
                     {
                         "matrix_id": "matrix-test",
                         "passed": True,
-                        "batches": [{"batch_id": "train_b001", "passed": True}],
+                        "batches": [
+                            {
+                                "batch_id": "train_b001",
+                                "passed": True,
+                                "runs": [
+                                    {
+                                        "run_key": "train-run-1",
+                                        "status": "completed",
+                                        "validation_passed": True,
+                                    }
+                                ],
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
             )
             self.assertEqual(
-                CAMPAIGN.discover_completed_batches(root, "matrix-test"),
+                CAMPAIGN.discover_completed_batches(root, self.matrix()),
+                {"train_b001"},
+            )
+
+    def test_failed_batch_and_repair_report_are_aggregated_by_run_key(self):
+        matrix = self.matrix()
+        matrix["batches"][0]["runs"].append({"run_key": "train-run-1b"})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reports = [
+                {
+                    "matrix_id": "matrix-test",
+                    "passed": False,
+                    "batches": [
+                        {
+                            "batch_id": "train_b001",
+                            "passed": False,
+                            "runs": [
+                                {
+                                    "run_key": "train-run-1",
+                                    "status": "completed",
+                                    "validation_passed": True,
+                                },
+                                {
+                                    "run_key": "train-run-1b",
+                                    "status": "failed",
+                                    "validation_passed": False,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "matrix_id": "matrix-test",
+                    "passed": True,
+                    "batches": [
+                        {
+                            "batch_id": "train_b001",
+                            "passed": True,
+                            "runs": [
+                                {
+                                    "run_key": "train-run-1b",
+                                    "status": "completed",
+                                    "validation_passed": True,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ]
+            for index, report in enumerate(reports):
+                (root / f"report-{index}.execution.json").write_text(
+                    json.dumps(report), encoding="utf-8"
+                )
+
+            self.assertEqual(
+                CAMPAIGN.discover_completed_batches(root, matrix),
                 {"train_b001"},
             )
 

@@ -898,7 +898,19 @@ batch timeout은 마지막 run의 시작 지연까지 포함해 자동 계산된
 실행 순서는 반드시 `train 전체 → validation 전체 → 별도 미래 날짜의 test 전체`다.
 validation과 test는 각각 `--split validation`, `--split test`로 바꾼다. scenario 실행 중
 중단된 batch는 부분 데이터가 남을 수 있어 자동 재시도되지 않는다. state의 마지막 attempt와
-execution report를 확인하기 전에는 `--allow-partial-batch-retry`를 붙이지 않는다.
+execution report를 확인하기 전에는 `--allow-partial-batch-retry`를 붙이지 않는다. 단일 run만
+실패했다면 원인 수정 후 fresh gate를 만들고 다음처럼 그 run만 복구한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
+  --batch-id 실패한_batch_id \
+  --run-key 실패한_run_key \
+  --execute
+```
+
+repair report가 `passed: true`이면 원래 campaign 명령을 옵션 없이 다시 실행한다. runner가
+원본·repair execution report의 통과 run을 합산해 완료 batch를 건너뛴다.
 
 ## 18. dataset과 학습 smoke
 

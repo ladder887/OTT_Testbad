@@ -200,6 +200,22 @@ class CollectionMatrixTest(unittest.TestCase):
             with self.assertRaisesRegex(MATRIX_RUNNER.MatrixExecutionError, "minutes old"):
                 MATRIX_RUNNER.load_recent_gate_report(path, 15.0)
 
+    def test_matrix_runner_selects_one_failed_run_for_repair(self):
+        matrix = self.build(phase="calibration", splits=("train",))
+        batch = matrix["batches"][0]
+        selected = batch["runs"][1]
+
+        repaired = MATRIX_RUNNER.select_run_subset([batch], (selected["run_key"],))
+
+        self.assertEqual([run["run_key"] for run in repaired[0]["runs"]], [selected["run_key"]])
+        self.assertEqual(repaired[0]["full_batch_run_count"], len(batch["runs"]))
+        self.assertEqual(
+            repaired[0]["planned_client_count"],
+            len(selected["reserved_client_ids"]),
+        )
+        self.assertEqual(repaired[0]["runs"][0]["start_offset_sec"], 0.0)
+        self.assertTrue(repaired[0]["run_repair"])
+
     def test_matrix_batch_resolves_one_live_channel_from_its_split(self):
         matrix = self.build()
         expected = {"train": ["live_01"], "validation": ["live_02"], "test": ["live_03"]}

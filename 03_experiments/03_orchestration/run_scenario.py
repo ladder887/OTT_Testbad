@@ -925,8 +925,8 @@ class ScenarioCoordinator:
                     "phases": [
                         vod_phase(
                             count,
-                            start_mode="absolute",
-                            start_index=index * max(1, count // 2),
+                            start_mode="fraction",
+                            start_fraction=index / (2 * consumer_count),
                             delay=self.delay((5.0, 6.8)),
                             initial_buffer_count=1,
                         )

@@ -179,5 +179,21 @@ test 순서로 실행한다. test 수집을 시작한 뒤 train을 추가하면 
 
 gate만 실패한 경우 같은 명령을 다시 실행해도 traffic 중복이 없다. scenario 실행 도중
 중단되거나 batch가 validation에 실패하면 일부 request/session이 이미 저장됐을 수 있다.
-이 경우 runner는 자동 재시도를 차단한다. 해당 prefix의 부분 데이터를 검토·정리한 뒤에만
-`--allow-partial-batch-retry`를 사용한다. 단순히 옵션을 붙여 중복 데이터를 만들지 않는다.
+이 경우 runner는 자동 재시도를 차단한다. execution report에서 실패한 `run_key`를 확인하고
+원인을 수정·배포한 뒤, fresh gate를 만든 다음 해당 run만 복구한다.
+
+```bash
+python3 03_experiments/03_orchestration/run_collection_matrix.py \
+  --matrix 06_outputs/00_collection_plans/tnsm_100lc_20260827_main_v1.json \
+  --batch-id train_b005 \
+  --run-key 실패한_run_key \
+  --execute
+```
+
+`--run-key`는 원래 start offset을 0으로 바꾸고 선택한 run의 client만 예약한다. campaign은
+원래 실패 report의 통과 run과 repair report의 통과 run을 `run_key`로 합산한다. batch의
+모든 run이 검증됐으면 다음 campaign 실행에서 해당 batch를 건너뛴다. 같은 `run_key`의
+완료 manifest가 둘 이상이면 audit이 중복 수집으로 거부한다.
+
+`--allow-partial-batch-retry`는 기존 통과 run의 manifest와 저장 데이터를 명시적으로
+폐기하고 batch 전체를 다시 수집할 때만 사용한다. 일반적인 단일 run 실패 복구에는 쓰지 않는다.
