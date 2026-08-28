@@ -76,6 +76,17 @@ P0~P4가 실제 적용된 별도 network pilot은 `--mode network`로 검사한�
 A1/A2/A3/A7의 약한·강한 variant가 모두 존재해야 한다. N6 flash crowd와 N7 popular
 LIVE는 같은 content를 독립 account/token으로 소비했는지도 검사한다.
 
+train만 끝난 단계에서는 test 전용 저강도 공격 variant를 요구하지 않도록 수집 단계도
+명시한다. 전체 train/validation/test를 함께 감사할 때는 이 옵션을 생략한다.
+
+```bash
+python3 03_experiments/05_validation/audit_pilot_collection.py \
+  --manifests 06_outputs/01_run_manifests/tnsm_100lc_20260827_main_v1 \
+  --mode main \
+  --required-splits train \
+  --output 06_outputs/01_data_quality/main_train_audit.json
+```
+
 hard negative 3쌍만 먼저 승인할 때는 `--mode hard-negative`를 사용한다. 이 mode는
 `N1:catalog_preview`/`A2:stealth`, `N6:flash_crowd`/`A6:low_rate`,
 `N7:popular_channel`/`A7:low_fanout`과 각 run의 collection validation을 요구한다.

@@ -28,11 +28,37 @@ EXPECTED_VARIANTS = {
     "A6": {"low_rate"},
     "A7": {"low_fanout", "high_fanout"},
 }
-REQUIRED_MAIN_VARIANTS = {
+NORMAL_MAIN_VARIANTS = {
     (scenario_id, variant)
     for scenario_id, variants in EXPECTED_VARIANTS.items()
+    if scenario_id.startswith("N")
     for variant in variants
 }
+MAIN_ATTACK_VARIANTS = {
+    "train": {
+        ("A1", "high_fanout"),
+        ("A2", "fast"),
+        ("A3", "high_parallel"),
+        ("A6", "low_rate"),
+        ("A7", "high_fanout"),
+    },
+    "validation": {
+        ("A1", "high_fanout"),
+        ("A2", "fast"),
+        ("A3", "high_parallel"),
+        ("A6", "low_rate"),
+        ("A7", "high_fanout"),
+    },
+    "test": {
+        ("A1", "low_fanout"),
+        ("A2", "stealth"),
+        ("A3", "low_parallel"),
+        ("A6", "low_rate"),
+        ("A7", "low_fanout"),
+    },
+}
+ALL_DATA_SPLITS = set(MAIN_ATTACK_VARIANTS)
+REQUIRED_MAIN_VARIANTS = NORMAL_MAIN_VARIANTS | set().union(*MAIN_ATTACK_VARIANTS.values())
 REQUIRED_HARD_NEGATIVE_VARIANTS = {
     ("N1", "catalog_preview"),
     ("A2", "stealth"),
@@ -53,6 +79,17 @@ EXPECTED_PROFILE_VALUES = {
 
 class AuditError(RuntimeError):
     """Raised when audit inputs cannot be loaded."""
+
+
+def required_main_variants(required_splits: set[str]) -> set[tuple[str, str]]:
+    unknown = sorted(required_splits - ALL_DATA_SPLITS)
+    if unknown:
+        raise AuditError(f"unknown data splits: {unknown}")
+    if not required_splits:
+        raise AuditError("at least one required data split is needed")
+    return NORMAL_MAIN_VARIANTS | set().union(
+        *(MAIN_ATTACK_VARIANTS[split] for split in required_splits)
+    )
 
 
 def expand_manifest_paths(values: list[str]) -> list[Path]:
@@ -201,7 +238,10 @@ def audit(
     manifest_paths: list[Path],
     inventory: dict[str, dict[str, str]],
     mode: str,
+    required_splits: set[str] | None = None,
 ) -> dict[str, Any]:
+    required_splits = set(required_splits or ALL_DATA_SPLITS)
+    required_variants = required_main_variants(required_splits)
     errors: list[str] = []
     warnings: list[str] = []
     run_ids: set[str] = set()
@@ -223,6 +263,7 @@ def audit(
     failure_count = 0
     superseded_failed_manifest_count = 0
     dataset_prefixes: Counter[str] = Counter()
+    data_splits: Counter[str] = Counter()
     run_reports: list[dict[str, Any]] = []
 
     completed_matrix_run_keys: Counter[str] = Counter()
@@ -286,6 +327,7 @@ def audit(
             if variant:
                 variant_counts[f"{scenario_id}:{variant}"] += 1
         dataset_prefixes[str(manifest.get("dataset_prefix") or "")] += 1
+        data_splits[str(manifest.get("parameters", {}).get("data_split") or "")] += 1
 
         validation_file = validation_path(path)
         validation_pass = False
@@ -382,7 +424,7 @@ def audit(
     missing_scenarios = sorted(EXPECTED_SCENARIOS - set(scenario_counts))
     missing_main_variants = sorted(
         f"{scenario_id}:{variant}"
-        for scenario_id, variant in REQUIRED_MAIN_VARIANTS
+        for scenario_id, variant in required_variants
         if variant_counts[f"{scenario_id}:{variant}"] == 0
     )
     missing_hard_negative_variants = sorted(
@@ -393,8 +435,18 @@ def audit(
     missing_applied_profiles = sorted(EXPECTED_PROFILES - set(applied_profiles))
     if mode in {"scenario", "main"} and missing_scenarios:
         errors.append(f"required scenarios are missing: {missing_scenarios}")
-    if mode == "main" and missing_main_variants:
-        errors.append(f"required scenario variants are missing: {missing_main_variants}")
+    observed_splits = {item for item in data_splits if item}
+    missing_data_splits = sorted(required_splits - observed_splits)
+    unexpected_data_splits = sorted(observed_splits - required_splits)
+    if mode == "main":
+        if data_splits.get("", 0):
+            errors.append(f"{data_splits['']} manifests have no data_split")
+        if missing_data_splits:
+            errors.append(f"required data splits are missing: {missing_data_splits}")
+        if unexpected_data_splits:
+            errors.append(f"unexpected data splits are present: {unexpected_data_splits}")
+        if missing_main_variants:
+            errors.append(f"required scenario variants are missing: {missing_main_variants}")
     if mode == "hard-negative" and missing_hard_negative_variants:
         errors.append(
             f"required hard-negative pilot variants are missing: {missing_hard_negative_variants}"
@@ -448,6 +500,10 @@ def audit(
         "http_failure_count": failure_count,
         "superseded_failed_manifest_count": superseded_failed_manifest_count,
         "dataset_prefixes": dict(sorted(dataset_prefixes.items())),
+        "required_data_splits": sorted(required_splits),
+        "observed_data_splits": dict(sorted(data_splits.items())),
+        "missing_data_splits": missing_data_splits,
+        "unexpected_data_splits": unexpected_data_splits,
         "errors": errors,
         "warnings": warnings,
         "runs": run_reports,
@@ -463,6 +519,11 @@ def parse_args() -> argparse.Namespace:
         choices=("scenario", "hard-negative", "network", "main"),
         default="scenario",
     )
+    parser.add_argument(
+        "--required-splits",
+        default="train,validation,test",
+        help="comma-separated data splits required by main mode",
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -471,7 +532,15 @@ def main() -> int:
     args = parse_args()
     try:
         paths = expand_manifest_paths(args.manifests)
-        report = audit(paths, load_inventory(args.inventory.resolve()), args.mode)
+        required_splits = {
+            item.strip() for item in args.required_splits.split(",") if item.strip()
+        }
+        report = audit(
+            paths,
+            load_inventory(args.inventory.resolve()),
+            args.mode,
+            required_splits,
+        )
     except (AuditError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"pilot audit failed: {exc}", file=sys.stderr)
         return 2

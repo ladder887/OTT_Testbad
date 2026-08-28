@@ -22,6 +22,21 @@ CACHE = load_module("validate_edge_cache_pair")
 
 
 class CollectionAuditTest(unittest.TestCase):
+    def test_train_main_gate_excludes_test_only_attack_variants(self):
+        required = COLLECTION.required_main_variants({"train"})
+
+        self.assertIn(("A1", "high_fanout"), required)
+        self.assertIn(("A2", "fast"), required)
+        self.assertNotIn(("A1", "low_fanout"), required)
+        self.assertNotIn(("A2", "stealth"), required)
+
+    def test_full_main_gate_includes_held_out_attack_variants(self):
+        required = COLLECTION.required_main_variants(
+            {"train", "validation", "test"}
+        )
+
+        self.assertEqual(required, COLLECTION.REQUIRED_MAIN_VARIANTS)
+
     def test_manifest_expansion_ignores_campaign_control_reports(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
