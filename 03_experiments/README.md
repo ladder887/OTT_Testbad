@@ -55,7 +55,10 @@ TV 0.465와 network profile TV 0.369로 학습에서 제외했다. matrix v2로 
 profile/physical host TV는 `0.118/0.047/0.082/0.056`이며 class 전용 범주는 없다.
 `segment_duplicate_ratio`와 `status_4xx_count`는 이번 수집에서 상수였다. parameter,
 feature 후보와 독립 group/content/future split을 동결한 `main_v1`은 2,550 runs와 계획
-5,483 segment-bearing sessions다. `train_b001~b004`를 통과했고, `train_b005`의 A1
-실패 1건은 playlist 길이 비례 시작점으로 수정한 뒤 해당 run key만 재수집해 완료했다.
-현재 `train_b006`부터 남은 train campaign을 실행 중이다. smoke/pilot metric과 partial
-train metric은 논문 분류 성능 결과에 사용하지 않는다.
+5,483 segment-bearing sessions다. train 29개 batch와 850개 run을 모두 완료해 1,965개
+session(정상 1,111/공격 854)을 export했다. run/network/train-stage main, session dataset,
+split provenance 감사도 모두 통과했으며 metadata TV는 모든 항목에서 0.15 이하다.
+`train_b005`의 A1 실패 1건은 playlist 길이 비례 시작점으로 수정한 뒤 해당 run key만
+재수집했고, 이전 실패 manifest는 provenance로만 보존한다. validation과 test 수집은 아직
+시작하지 않았다. smoke/pilot metric과 partial train metric은 논문 분류 성능 결과에
+사용하지 않는다.
