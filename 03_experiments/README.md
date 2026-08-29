@@ -59,6 +59,10 @@ feature 후보와 독립 group/content/future split을 동결한 `main_v1`은 2,
 session(정상 1,111/공격 854)을 export했다. run/network/train-stage main, session dataset,
 split provenance 감사도 모두 통과했으며 metadata TV는 모든 항목에서 0.15 이하다.
 `train_b005`의 A1 실패 1건은 playlist 길이 비례 시작점으로 수정한 뒤 해당 run key만
-재수집했고, 이전 실패 manifest는 provenance로만 보존한다. validation과 test 수집은 아직
-시작하지 않았다. smoke/pilot metric과 partial train metric은 논문 분류 성능 결과에
-사용하지 않는다.
+재수집했고, 이전 실패 manifest는 provenance로만 보존한다. validation도 87개 batch와
+850개 run을 모두 완료해 1,853개 session(정상 1,069/공격 784)을 export했다. validation의
+run/network/main, session dataset, split 감사와 train+validation 3,818행 provenance 감사는
+모두 통과했다. validation metadata TV 최댓값은 content/content type `0.052193`이며,
+train-validation split 교차와 timing-scaled row는 0이다. test 수집은 아직 시작하지 않았고,
+validation으로 threshold와 최종 모델 설정을 고정한 뒤에만 시작한다. smoke/pilot metric과
+train 내부 개발 metric은 논문 최종 분류 성능으로 사용하지 않는다.
