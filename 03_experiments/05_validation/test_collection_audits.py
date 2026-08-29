@@ -268,6 +268,68 @@ class CollectionAuditTest(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(set(report["applied_network_profiles"]), COLLECTION.EXPECTED_PROFILES)
 
+    def test_validation_network_gate_accepts_two_reserved_hosts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inventory = {}
+            paths = []
+            for index, profile in enumerate(sorted(COLLECTION.EXPECTED_PROFILES)):
+                client_id = f"lc{index + 1:03d}"
+                host_id = ("pi07", "pi08")[index % 2]
+                edge_id = ("edge-kr", "edge-jp", "edge-sg", "edge-us")[index % 4]
+                source_ip = f"192.168.0.{211 + index}"
+                inventory[client_id] = {
+                    "logical_client_id": client_id,
+                    "physical_host_id": host_id,
+                    "source_ip": source_ip,
+                    "edge_id": edge_id,
+                    "network_profile_id": profile,
+                }
+                expected_rtt, expected_loss = COLLECTION.EXPECTED_PROFILE_VALUES[profile]
+                manifest = {
+                    "run_id": f"run_{profile}",
+                    "dataset_prefix": "tnsm_100lc_validation",
+                    "scenario_id": "N1",
+                    "status": "completed",
+                    "parameters": {
+                        "data_split": "validation",
+                        "selected_clients": [inventory[client_id]],
+                        "client_results": [
+                            {
+                                "logical_client_id": client_id,
+                                "http_retry_count": 0,
+                                "http_failure_count": 0,
+                                "network_impairment": {
+                                    "profile_id": profile,
+                                    "configured_added_rtt_ms": expected_rtt,
+                                    "approximate_end_to_end_loss_percent": expected_loss,
+                                },
+                            }
+                        ],
+                    },
+                    "token_bindings": [
+                        {"cdn_token_id": f"cdn_{index:024x}", "content_id": "video_10"}
+                    ],
+                }
+                path = root / f"run_{profile}.json"
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                path.with_suffix(".validation.json").write_text(
+                    json.dumps({"passed": True}), encoding="utf-8"
+                )
+                paths.append(path)
+
+            report = COLLECTION.audit(
+                paths,
+                inventory,
+                "network",
+                required_splits={"validation"},
+            )
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["required_physical_hosts"], ["pi07", "pi08"])
+        self.assertEqual(report["missing_required_physical_hosts"], [])
+        self.assertEqual(report["unexpected_physical_hosts"], [])
+
     def test_missing_validation_fails_gate(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "run.json"

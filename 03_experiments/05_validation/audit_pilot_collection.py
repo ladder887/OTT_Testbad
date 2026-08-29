@@ -58,6 +58,11 @@ MAIN_ATTACK_VARIANTS = {
     },
 }
 ALL_DATA_SPLITS = set(MAIN_ATTACK_VARIANTS)
+SPLIT_HOSTS = {
+    "train": {f"pi{index:02d}" for index in range(1, 7)},
+    "validation": {"pi07", "pi08"},
+    "test": {"pi09", "pi10"},
+}
 REQUIRED_MAIN_VARIANTS = NORMAL_MAIN_VARIANTS | set().union(*MAIN_ATTACK_VARIANTS.values())
 REQUIRED_HARD_NEGATIVE_VARIANTS = {
     ("N1", "catalog_preview"),
@@ -90,6 +95,15 @@ def required_main_variants(required_splits: set[str]) -> set[tuple[str, str]]:
     return NORMAL_MAIN_VARIANTS | set().union(
         *(MAIN_ATTACK_VARIANTS[split] for split in required_splits)
     )
+
+
+def required_split_hosts(required_splits: set[str]) -> set[str]:
+    unknown = sorted(required_splits - set(SPLIT_HOSTS))
+    if unknown:
+        raise AuditError(f"unknown data splits: {unknown}")
+    if not required_splits:
+        raise AuditError("at least one required data split is needed")
+    return set().union(*(SPLIT_HOSTS[split] for split in required_splits))
 
 
 def expand_manifest_paths(values: list[str]) -> list[Path]:
@@ -433,6 +447,9 @@ def audit(
         if variant_counts[f"{scenario_id}:{variant}"] == 0
     )
     missing_applied_profiles = sorted(EXPECTED_PROFILES - set(applied_profiles))
+    required_physical_hosts: set[str] = set()
+    missing_required_physical_hosts: list[str] = []
+    unexpected_physical_hosts: list[str] = []
     if mode in {"scenario", "main"} and missing_scenarios:
         errors.append(f"required scenarios are missing: {missing_scenarios}")
     observed_splits = {item for item in data_splits if item}
@@ -456,7 +473,23 @@ def audit(
             errors.append(f"network profiles were not actually applied: {missing_applied_profiles}")
         if len(coverage["edge_id"]) < 4:
             errors.append("network pilot must cover all four Edges")
-        if len(coverage["physical_host_id"]) < 5:
+        split_scoped_host_gate = mode == "main" or required_splits != ALL_DATA_SPLITS
+        if split_scoped_host_gate:
+            required_physical_hosts = required_split_hosts(required_splits)
+            observed_hosts = set(coverage["physical_host_id"])
+            missing_required_physical_hosts = sorted(required_physical_hosts - observed_hosts)
+            unexpected_physical_hosts = sorted(observed_hosts - required_physical_hosts)
+            if missing_required_physical_hosts:
+                errors.append(
+                    "required split physical hosts are missing: "
+                    f"{missing_required_physical_hosts}"
+                )
+            if unexpected_physical_hosts:
+                errors.append(
+                    "physical hosts violate reserved splits: "
+                    f"{unexpected_physical_hosts}"
+                )
+        elif len(coverage["physical_host_id"]) < 5:
             errors.append("network pilot must cover at least five physical hosts")
 
     for class_name in ("normal", "attack"):
@@ -496,6 +529,9 @@ def audit(
         },
         "applied_network_profiles": dict(sorted(applied_profiles.items())),
         "missing_applied_network_profiles": missing_applied_profiles,
+        "required_physical_hosts": sorted(required_physical_hosts),
+        "missing_required_physical_hosts": missing_required_physical_hosts,
+        "unexpected_physical_hosts": unexpected_physical_hosts,
         "http_retry_count": retry_count,
         "http_failure_count": failure_count,
         "superseded_failed_manifest_count": superseded_failed_manifest_count,
